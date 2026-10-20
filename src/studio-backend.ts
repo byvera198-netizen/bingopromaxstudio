@@ -23,6 +23,8 @@ type StudioBlockRow = {
 export type StudioTenant = { id: string; name: string; slug: string; ownerEmail: string; active: boolean }
 export type StudioParty = { id: string; type: 'distributor' | 'seller'; name: string; email: string; phone: string; distributorId?: string; active: boolean }
 export type StudioTransfer = { id: string; blockCode: string; fromType: string; fromName: string; toType: string; toName: string; notes: string; transferredBy: string; createdAt: string }
+export type StudioClient = { id: string; name: string; email: string; phone: string }
+export type StudioSale = { id: string; blockCode: string; sellerType: 'distributor' | 'seller'; sellerId: string; clientName: string; sheetsSold: number; cardsSold: number; amount: number; notes: string; soldAt: string }
 
 export type StudioGame = {
   id: string
@@ -441,18 +443,27 @@ export async function createStudioPartyAccount(type: 'distributor' | 'seller', n
 }
 
 export async function loadStudioNetwork(tenantId: string) {
-  const [distributorsResult, sellersResult, transfersResult] = await Promise.all([
+  const [distributorsResult, sellersResult, clientsResult, transfersResult, salesResult] = await Promise.all([
     supabase.from('studio_distributors').select('id,name,email,phone,active').eq('tenant_id', tenantId).eq('active', true).order('name'),
     supabase.from('studio_sellers').select('id,distributor_id,name,email,phone,active').eq('tenant_id', tenantId).eq('active', true).order('name'),
+    supabase.from('studio_clients').select('id,name,email,phone').eq('tenant_id', tenantId).order('name'),
     supabase.from('studio_block_transfers').select('id,block_code,from_type,from_name,to_type,to_name,notes,transferred_by,created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(300),
+    supabase.from('studio_sales').select('id,block_code,seller_type,seller_id,client_id,sheets_sold,cards_sold,amount,notes,sold_at,studio_clients(name)').eq('tenant_id', tenantId).order('sold_at', { ascending: false }).limit(500),
   ])
   if (distributorsResult.error) throw distributorsResult.error
   if (sellersResult.error) throw sellersResult.error
+  if (clientsResult.error) throw clientsResult.error
   if (transfersResult.error) throw transfersResult.error
+  if (salesResult.error) throw salesResult.error
   return {
     distributors: (distributorsResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), type: 'distributor' as const, name: String(row.name), email: String(row.email), phone: String(row.phone ?? ''), active: row.active !== false })),
     sellers: (sellersResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), type: 'seller' as const, name: String(row.name), email: String(row.email), phone: String(row.phone ?? ''), distributorId: String(row.distributor_id), active: row.active !== false })),
+    clients: (clientsResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), name: String(row.name), email: String(row.email ?? ''), phone: String(row.phone ?? '') })),
     transfers: (transfersResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), blockCode: String(row.block_code), fromType: String(row.from_type), fromName: String(row.from_name ?? ''), toType: String(row.to_type), toName: String(row.to_name ?? ''), notes: String(row.notes ?? ''), transferredBy: String(row.transferred_by ?? ''), createdAt: String(row.created_at) })),
+    sales: (salesResult.data as Array<Record<string, unknown>> ?? []).map((row) => {
+      const client = row.studio_clients && typeof row.studio_clients === 'object' && !Array.isArray(row.studio_clients) ? row.studio_clients as Record<string, unknown> : {}
+      return { id: String(row.id), blockCode: String(row.block_code), sellerType: row.seller_type === 'seller' ? 'seller' as const : 'distributor' as const, sellerId: String(row.seller_id), clientName: String(client.name ?? 'Cliente general'), sheetsSold: Number(row.sheets_sold ?? 0), cardsSold: Number(row.cards_sold ?? 0), amount: Number(row.amount ?? 0), notes: String(row.notes ?? ''), soldAt: String(row.sold_at) }
+    }),
   }
 }
 
@@ -460,4 +471,25 @@ export async function transferStudioBlock(blockCode: string, toType: 'distributo
   const { data, error } = await supabase.rpc('studio_transfer_block', { p_block_code: blockCode, p_to_type: toType, p_to_id: toId, p_notes: notes })
   if (error) throw error
   return data as { block_code: string; to_type: string; to_id: string; to_name: string }
+}
+
+export async function createStudioClient(name: string, email: string, phone: string, tenantId?: string) {
+  const { data, error } = await supabase.rpc('studio_create_client', { p_name: name, p_email: email, p_phone: phone, p_tenant_id: tenantId ?? null })
+  if (error) throw error
+  return data as { id: string; name: string; email: string; phone: string }
+}
+
+export async function recordStudioSale(input: { blockCode: string; sellerType: 'distributor' | 'seller'; sellerId: string; clientId: string; sheetsSold: number; cardsSold: number; amount: number; notes?: string }) {
+  const { data, error } = await supabase.rpc('studio_record_sale', {
+    p_block_code: input.blockCode,
+    p_seller_type: input.sellerType,
+    p_seller_id: input.sellerId,
+    p_client_id: input.clientId,
+    p_sheets_sold: input.sheetsSold,
+    p_cards_sold: input.cardsSold,
+    p_amount: input.amount,
+    p_notes: input.notes ?? '',
+  })
+  if (error) throw error
+  return data as { id: string; block_code: string; sheets_sold: number; cards_sold: number; amount: number }
 }

@@ -5,7 +5,7 @@
 1. Copia `.env.example` como `.env`.
 2. Configura `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` con los valores públicos del proyecto Supabase.
 3. Configura `VITE_STUDIO_AUTH_REDIRECT_URL` con `https://bingopromaxstudio.pages.dev`.
-3. Ejecuta `npm install` y después `npm run build`.
+4. Ejecuta `npm install` y después `npm run build`.
 
 La clave debe ser la publishable/anon. Nunca coloques una `service_role` en este proyecto ni en variables `VITE_*`.
 
@@ -28,12 +28,13 @@ Finalmente ejecuta la migración de operación multiadministrador:
 
 ```text
 supabase/003_multi_tenant_distribution.sql
+supabase/004_sales_clients.sql
 ```
 
-Esta tercera migración crea un espacio aislado por administrador, cuentas de
-distribuidor y vendedor, titularidad de cada bloque, transferencias auditables
-y el flujo protegido administrador → distribuidor → vendedor. Solo los dos
-desarrolladores iniciales pueden crear administradores.
+Estas migraciones crean un espacio aislado por administrador, cuentas de
+distribuidor y vendedor, clientes, ventas, titularidad de cada bloque,
+transferencias auditables y el flujo protegido administrador → distribuidor →
+vendedor. Solo los dos desarrolladores iniciales pueden crear administradores.
 
 La migración crea inventario de bloques, partidas, patrones, auditoría, miembros y RLS. Las cuentas iniciales son:
 
