@@ -1,0 +1,46 @@
+.form-panel textarea,
+.form-panel select {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 11px 12px;
+  border: 1px solid #2b3636;
+  border-radius: 8px;
+  background: #151b1c;
+  color: white;
+  font: inherit;
+  outline: none;
+}
+
+.form-panel textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
+.form-panel select[multiple] {
+  min-height: 100px;
+  padding: 7px;
+}
+
+.form-panel select:focus,
+.form-panel textarea:focus {
+  border-color: var(--gold-soft);
+}
+
+.form-panel option {
+  padding: 5px;
+  background: #151b1c;
+  color: #eef0e8;
+}
+
+.generator-details {
+  margin: 20px 0 8px;
+  padding: 16px 0 4px;
+  border-top: 1px solid #202829;
+  border-bottom: 1px solid #202829;
+}
+
+.generator-details h3 {
+  margin: 7px 0 4px;
+  font-size: 15px;
+}

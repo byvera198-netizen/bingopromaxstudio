@@ -17,6 +17,14 @@ export type BingoSheet = {
   cards: BingoCard[]
 }
 
+export type BingoPrintMetadata = {
+  date?: string
+  prizePlan?: string
+  header?: string
+  patterns?: string[]
+  notes?: string
+}
+
 export type BingoBlock = {
   code: string
   campaign: string
@@ -32,6 +40,7 @@ export type BingoBlock = {
   holderId?: string
   holderName?: string
   watermark?: { text: string; opacity: number; position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }
+  printMetadata?: BingoPrintMetadata
 }
 
 const columnRanges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]] as const
@@ -136,19 +145,30 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
     if (index > 0) doc.addPage()
     doc.setFillColor(13, 17, 17)
     doc.rect(0, 0, 210, 22, 'F')
-    doc.setTextColor(245, 200, 75)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(14)
-    doc.text('BINGO PROMAX STUDIO', 14, 12)
+    const metadata = block.printMetadata
+    if (metadata?.header) {
+      doc.setTextColor(245, 200, 75)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.text(metadata.header, 14, 12)
+    }
     doc.setTextColor(180, 188, 180)
     doc.setFont('courier', 'normal')
     doc.setFontSize(7)
     doc.text(`HOJA ${sheet.code}`, 196, 10, { align: 'right' })
     doc.text(`BLOQUE ${block.code}`, 196, 16, { align: 'right' })
-    doc.setTextColor(50, 58, 52)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.text('Cartones de bingo · 5 × 5 · centro libre · 75 bolillas', 14, 30)
+    const metadataLines = [
+      metadata?.date ? `Fecha: ${metadata.date}` : '',
+      metadata?.prizePlan ? `Plan de premios: ${metadata.prizePlan}` : '',
+      metadata?.patterns?.length ? `Patrones: ${metadata.patterns.join(' · ')}` : '',
+    ].filter(Boolean)
+    if (metadataLines.length) {
+      doc.setTextColor(50, 58, 52)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      metadataLines.slice(0, 2).forEach((line, lineIndex) => doc.text(line, 14, 28 + lineIndex * 4))
+      if (metadataLines[2]) doc.text(metadataLines[2], 14, 36)
+    }
     if (watermark?.text) {
       const shade = Math.max(150, Math.min(235, Math.round(235 - watermark.opacity * 180)))
       doc.setTextColor(shade, shade, shade)
