@@ -1,0 +1,53 @@
+# Bingo ProMax Studio — puesta en operación
+
+## 1. Configuración local
+
+1. Copia `.env.example` como `.env`.
+2. Configura `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` con los valores públicos del proyecto Supabase.
+3. Ejecuta `npm install` y después `npm run build`.
+
+La clave debe ser la publishable/anon. Nunca coloques una `service_role` en este proyecto ni en variables `VITE_*`.
+
+## 2. Base de datos y seguridad
+
+En el SQL Editor de Supabase ejecuta una sola vez:
+
+```text
+supabase/001_studio.sql
+```
+
+La migración crea inventario de bloques, partidas, patrones, auditoría, miembros y RLS. Las cuentas iniciales son:
+
+- `byvera198@gmail.com`
+- `bveraalvear@gmail.com`
+
+En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL local y la URL de producción a `Redirect URLs`.
+
+## 3. Validación mínima antes de publicar
+
+```powershell
+npm run build
+```
+
+Después valida manualmente:
+
+1. Solicitar enlace con cada cuenta desarrolladora.
+2. Generar 100 hojas, descargar un PDF y un ZIP.
+3. Confirmar 4 cartones por hoja, centro libre y numeración consecutiva.
+4. Marcar un bloque como entregado y verificar que aparezca en auditoría.
+5. Crear un operador y confirmar que solo vea los módulos seleccionados.
+6. Crear una partida, seleccionar patrones, registrar bolillas y confirmar el ganador.
+7. Exportar JSON v1.1 e importarlo en Bingo Control ProMax con una cuenta desarrolladora.
+
+## 4. Publicación
+
+Publica el contenido generado en `dist/` como sitio estático. En el proveedor elegido usa:
+
+- Build command: `npm run build`
+- Output directory: `dist`
+
+Antes de publicar, comprueba que la URL final esté registrada en Supabase Auth. El repositorio contiene el código y la migración; la ejecución de la migración y la configuración de Auth son pasos administrativos del proyecto Supabase.
+
+## 5. Escala de generación
+
+La generación funciona en el navegador y guarda inventarios grandes en IndexedDB. Para lotes cercanos a 200.000 hojas, la siguiente mejora de producción debe mover la generación y creación de PDFs a un worker/cola de servidor, manteniendo el mismo formato JSON v1.1 y los mismos códigos de bloque.
