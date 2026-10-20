@@ -177,3 +177,37 @@ export function isPatternComplete(card: BingoCard, cells: number[], drawn: Set<n
     return value === 0 || drawn.has(value)
   })
 }
+
+export type ProMaxPackage = {
+  schemaVersion: '1.0'
+  source: 'bingo-promax-studio'
+  generatedAt: string
+  campaigns: Array<{ code: string; blocks: BingoBlock[] }>
+}
+
+export function createProMaxPackage(blocks: BingoBlock[]): ProMaxPackage {
+  const campaigns = new Map<string, BingoBlock[]>()
+  blocks.forEach(block => campaigns.set(block.campaign, [...(campaigns.get(block.campaign) ?? []), block]))
+  return { schemaVersion: '1.0', source: 'bingo-promax-studio', generatedAt: new Date().toISOString(), campaigns: [...campaigns.entries()].map(([code, campaignBlocks]) => ({ code, blocks: campaignBlocks })) }
+}
+
+export function blocksToProMaxJson(blocks: BingoBlock[]) {
+  return JSON.stringify(createProMaxPackage(blocks), null, 2)
+}
+
+export function blocksToProMaxCsv(blocks: BingoBlock[]) {
+  const header = 'schema_version,source,campaign_code,block_code,sheet_code,page_number,card_1,card_2,card_3,card_4'
+  const rows = blocks.flatMap(block => block.sheets.map(sheet => [
+    '1.0', 'bingo-promax-studio', block.campaign, block.code, sheet.code, sheet.pageNumber,
+    ...sheet.cards.map(card => `${card.id}:${card.numbers.flat().join('|')}`),
+  ].map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')))
+  return [header, ...rows].join('\n')
+}
+
+export function parseProMaxPackage(raw: string): BingoBlock[] {
+  const parsed = JSON.parse(raw) as Partial<ProMaxPackage>
+  if (parsed.schemaVersion !== '1.0' || parsed.source !== 'bingo-promax-studio' || !Array.isArray(parsed.campaigns)) throw new Error('El archivo no corresponde al paquete Bingo ProMax Studio v1.0.')
+  const blocks = parsed.campaigns.flatMap(campaign => Array.isArray(campaign.blocks) ? campaign.blocks : [])
+  if (!blocks.length || blocks.some(block => !block.code || !Array.isArray(block.sheets))) throw new Error('El paquete no contiene bloques válidos.')
+  return blocks as BingoBlock[]
+}
