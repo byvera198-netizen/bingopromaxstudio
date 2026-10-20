@@ -1,0 +1,148 @@
+import { useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
+import { createRoot } from 'react-dom/client'
+import { blocksToJson, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
+import './styles.css'
+
+const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
+
+type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'users' | 'audit'
+type Pattern = { id: string; name: string; description: string; group: string; color: string; cells: number[]; active: boolean }
+
+const seedPatterns: Pattern[] = [
+  { id: 'full', name: 'Cartón lleno', description: 'Completar todas las casillas impresas.', group: 'Clásicos', color: '#f5c84b', cells: Array.from({ length: 25 }, (_, i) => i), active: true },
+  { id: 'letter-a', name: 'Letra A', description: 'Figura con forma de A.', group: 'Letras', color: '#b9ed2c', cells: [0, 1, 2, 3, 4, 5, 9, 6, 8, 10, 12, 15, 20], active: true },
+  { id: 'letter-x', name: 'Letra X', description: 'Las dos diagonales forman una X.', group: 'Letras', color: '#d29cff', cells: [0, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24], active: true },
+  { id: 'cross', name: 'Cruz', description: 'La fila y columna central.', group: 'Especiales', color: '#6ee7d1', cells: [2, 7, 10, 11, 12, 13, 14, 17, 22], active: true },
+  { id: 'diamond', name: 'Diamante', description: 'Contorno en forma de diamante.', group: 'Especiales', color: '#7ca6ff', cells: [2, 6, 8, 10, 14, 16, 18, 22], active: false },
+  { id: 'corners', name: 'Cuatro esquinas', description: 'Las cuatro esquinas del cartón.', group: 'Clásicos', color: '#ff9e5c', cells: [0, 4, 20, 24], active: false },
+  { id: 'line', name: 'Línea central', description: 'Completar la fila central.', group: 'Clásicos', color: '#ef7898', cells: [10, 11, 12, 13, 14], active: false },
+  { id: 'number-7', name: 'Número 7', description: 'Figura con forma de 7.', group: 'Números', color: '#b9ed2c', cells: [0, 1, 2, 3, 4, 9, 14, 19, 24], active: false },
+]
+
+const sampleCard = [
+  [4, 18, 31, 47, 69],
+  [8, 22, 35, 52, 73],
+  [2, 27, 0, 56, 66],
+  [14, 24, 39, 59, 71],
+  [11, 20, 42, 50, 64],
+]
+
+const demoCard: BingoCard = { id: 'DEMO-H000001-C1', numbers: sampleCard }
+
+function Logo({ compact = false }: { compact?: boolean }) {
+  return <div className={`brand ${compact ? 'brand-compact' : ''}`}><div className="brand-mark">B</div><div><strong>BINGO</strong><span>ProMax Studio</span></div></div>
+}
+
+function Icon({ name }: { name: string }) {
+  const icons: Record<string, string> = { grid: '▦', play: '▷', layers: '▤', spark: '✦', users: '♙', audit: '◷', settings: '⚙', download: '↓', plus: '+', arrow: '→', check: '✓', lock: '⌑' }
+  return <span className="icon" aria-hidden="true">{icons[name] ?? '•'}</span>
+}
+
+function Login({ onLogin }: { onLogin: (email: string) => void }) {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState('')
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const normalized = email.trim().toLowerCase()
+    if (!ALLOWED_EMAILS.includes(normalized)) {
+      setError('Esta cuenta todavía no está autorizada para acceder.')
+      return
+    }
+    onLogin(normalized)
+  }
+  return <main className="login-shell">
+    <div className="login-glow glow-one" /><div className="login-glow glow-two" />
+    <section className="login-card">
+      <Logo />
+      <div className="eyebrow">CENTRO DE OPERACIONES</div>
+      <h1>Todo el control de tus cartones.</h1>
+      <p className="muted">Genera, organiza y prepara tus partidas desde un solo espacio profesional.</p>
+      <form onSubmit={submit} className="login-form">
+        <label>Correo autorizado<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu-correo@dominio.com" autoFocus /></label>
+        {error && <div className="error-box">{error}</div>}
+        <button className="primary wide" type="submit">Entrar al estudio <Icon name="arrow" /></button>
+      </form>
+      <div className="login-note"><Icon name="lock" /> Acceso privado para el equipo de desarrollo</div>
+    </section>
+  </main>
+}
+
+function Sidebar({ view, setView, email }: { view: View; setView: (view: View) => void; email: string }) {
+  const sections = [
+    { label: 'OPERACIÓN', items: [['dashboard', 'grid', 'Resumen'], ['generator', 'spark', 'Generar cartones'], ['blocks', 'layers', 'Bloques y hojas'], ['games', 'play', 'Sala de juego']] },
+    { label: 'CONFIGURACIÓN', items: [['patterns', 'spark', 'Patrones'], ['users', 'users', 'Usuarios'], ['audit', 'audit', 'Auditoría']] },
+  ] as const
+  return <aside className="sidebar">
+    <div className="sidebar-top"><Logo compact /><button className="collapse">‹</button></div>
+    <div className="profile"><div className="avatar">{email[0].toUpperCase()}</div><div><strong>Desarrollador</strong><span>{email}</span></div><span className="online" /></div>
+    <nav>{sections.map(section => <div className="nav-section" key={section.label}><div className="nav-label">{section.label}</div>{section.items.map(([id, icon, label]) => <button key={id} className={`nav-item ${view === id ? 'selected' : ''}`} onClick={() => setView(id as View)}><Icon name={icon} /><span>{label}</span>{id === 'blocks' && <em>3</em>}</button>)}</div>)}</nav>
+    <div className="sidebar-bottom"><div className="plan-card"><span className="plan-icon">✦</span><div><b>Studio Premium</b><small>Entorno protegido</small></div></div><button className="nav-item"><Icon name="settings" /><span>Configuración</span></button></div>
+  </aside>
+}
+
+function Topbar({ view, onLogout }: { view: View; onLogout: () => void }) {
+  const titles: Record<View, [string, string]> = { dashboard: ['Resumen general', 'Tu operación, en un vistazo.'], generator: ['Generador de cartones', 'Crea hojas listas para distribuir.'], blocks: ['Bloques y hojas', 'Organiza tus lotes de distribución.'], games: ['Sala de juego', 'Prepara y controla una nueva partida.'], patterns: ['Patrones de juego', 'Define las figuras que se jugarán.'], users: ['Usuarios y accesos', 'Administra el equipo autorizado.'], audit: ['Auditoría', 'Actividad reciente del estudio.'] }
+  return <header className="topbar"><div><div className="breadcrumb">BINGO PROMAX STUDIO <span>/</span> {titles[view][0].toUpperCase()}</div><h2>{titles[view][0]}</h2></div><div className="top-actions"><div className="status-dot"><span /> Sistema operativo</div><button className="ghost" onClick={onLogout}>Salir</button><button className="user-mini">BV</button></div></header>
+}
+
+function StatCard({ label, value, detail, accent, icon }: { label: string; value: string; detail: string; accent: string; icon: string }) {
+  return <article className="stat-card"><div className="stat-icon" style={{ color: accent, background: `${accent}14` }}><Icon name={icon} /></div><div className="stat-label">{label}</div><strong>{value}</strong><small>{detail}</small><div className="stat-line" style={{ background: accent }} /></article>
+}
+
+function Dashboard({ setView }: { setView: (view: View) => void }) {
+  return <div className="page-content">
+    <section className="hero-panel"><div><div className="eyebrow">BINGO PROMAX STUDIO <span className="live-pill">● LISTO</span></div><h1>Tu operación,<br /><span>más clara y más rápida.</span></h1><p>Gestiona cartones, bloques y partidas desde un centro de operaciones diseñado para crecer contigo.</p><button className="primary" onClick={() => setView('generator')}>Crear cartones <Icon name="arrow" /></button></div><div className="hero-orbit"><div className="orbit-ring ring-a" /><div className="orbit-ring ring-b" /><div className="hero-badge"><b>75</b><span>bolillas</span></div><div className="orbit-dot dot-a" /><div className="orbit-dot dot-b" /><div className="orbit-dot dot-c" /></div></section>
+    <div className="stats-grid"><StatCard label="Hojas generadas" value="12,480" detail="+18.4% este mes" accent="#f5c84b" icon="layers" /><StatCard label="Cartones activos" value="49,920" detail="4 por cada hoja" accent="#6ee7d1" icon="grid" /><StatCard label="Partidas realizadas" value="28" detail="6 esta semana" accent="#b9ed2c" icon="play" /><StatCard label="Patrones disponibles" value="64" detail="8 habilitados" accent="#bda1ff" icon="spark" /></div>
+    <div className="content-grid"><section className="panel activity-panel"><div className="panel-heading"><div><div className="eyebrow">ACTIVIDAD RECIENTE</div><h3>Últimas operaciones</h3></div><button className="text-button" onClick={() => setView('audit')}>Ver auditoría <Icon name="arrow" /></button></div><div className="activity-list"><Activity icon="spark" color="#f5c84b" title="Lote generado" description="Bloque BP-2026-003 creado con 40 hojas" time="Hace 12 min" /><Activity icon="download" color="#6ee7d1" title="Descarga completada" description="Distribución Norte descargó BP-2026-002" time="Hace 1 h" /><Activity icon="play" color="#b9ed2c" title="Partida finalizada" description="Partida Nueva jornada · 3 ganadores" time="Ayer, 18:42" /><Activity icon="users" color="#bda1ff" title="Acceso autorizado" description="bveraalvear@gmail.com inició sesión" time="Ayer, 09:15" /></div></section><section className="panel quick-panel"><div className="eyebrow">ACCESOS RÁPIDOS</div><h3>¿Qué quieres hacer?</h3><QuickAction icon="spark" title="Generar cartones" text="Crea una nueva tanda" onClick={() => setView('generator')} /><QuickAction icon="play" title="Preparar partida" text="Selecciona tus patrones" onClick={() => setView('games')} /><QuickAction icon="layers" title="Ver bloques" text="Gestiona tus entregas" onClick={() => setView('blocks')} /></section></div>
+  </div>
+}
+
+function Activity({ icon, color, title, description, time }: { icon: string; color: string; title: string; description: string; time: string }) { return <div className="activity-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{description}</span></div><time>{time}</time></div> }
+function QuickAction({ icon, title, text, onClick }: { icon: string; title: string; text: string; onClick: () => void }) { return <button className="quick-action" onClick={onClick}><div className="quick-icon"><Icon name={icon} /></div><div><b>{title}</b><span>{text}</span></div><Icon name="arrow" /></button> }
+
+function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[]) => void; setView: (view: View) => void }) {
+  const [sheets, setSheets] = useState(100)
+  const [code, setCode] = useState('BP-2026')
+  const [progress, setProgress] = useState(0)
+  const [done, setDone] = useState(false)
+  const [generated, setGenerated] = useState<BingoBlock[]>([])
+  const [error, setError] = useState('')
+  const generate = () => {
+    setError(''); setDone(false); setProgress(12)
+    window.setTimeout(() => {
+      try {
+        const result = generateBatch(code, sheets)
+        setGenerated(result); onGenerated(result); setProgress(100); setDone(true)
+      } catch (generationError) { setProgress(0); setError(generationError instanceof Error ? generationError.message : 'No se pudo generar el lote.') }
+    }, 80)
+  }
+  const downloadZip = async () => { if (!generated.length) return; const blob = await createBlocksZip(generated); triggerDownload(blob, `${code.toUpperCase()}-bloques.zip`) }
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">NUEVA GENERACIÓN</div><h1>Diseña tu próximo lote.</h1><p className="muted">Cada hoja tendrá cuatro cartones únicos de 5×5 con centro libre.</p></div><div className="secure-badge"><Icon name="check" /> Motor real de cartones activos</div></div><div className="generator-layout"><section className="panel form-panel"><div className="panel-heading"><div><h3>Configuración del lote</h3><p>Define cómo se identificará y distribuirá.</p></div><span className="step-badge">01 / 02</span></div><label>Nombre del lote<input value={code} onChange={e => setCode(e.target.value)} /></label><label>Cantidad de hojas<div className="number-control"><button onClick={() => setSheets(Math.max(100, sheets - 100))}>−</button><input type="number" min="100" max="200000" value={sheets} onChange={e => setSheets(Math.min(200000, Math.max(100, Number(e.target.value))))} /><button onClick={() => setSheets(Math.min(200000, sheets + 100))}>+</button></div><small className="helper">Mínimo 100 · máximo 200.000 · se crearán {sheets.toLocaleString('es-EC')} hojas / {(sheets * 4).toLocaleString('es-EC')} cartones</small></label><div className="two-fields"><label>Hojas por bloque<input value="40 hojas" disabled /></label><label>Formato<input value="5 × 5 · 75 bolillas" disabled /></label></div><div className="option-row"><div className="toggle active"><span /></div><div><b>Evitar cartones duplicados</b><small>Validación activa durante la generación</small></div></div><div className="option-row"><div className="toggle active"><span /></div><div><b>Crear archivos por bloque</b><small>PDF, ZIP y manifiesto CSV/JSON</small></div></div>{error && <div className="error-box">{error}</div>}<button className="primary wide" onClick={generate} disabled={progress > 0 && progress < 100}>{progress > 0 && progress < 100 ? 'Generando cartones…' : done ? 'Generación completada' : 'Generar lote real'} <Icon name={done ? 'check' : 'arrow'} /></button>{done && <div className="download-actions"><button className="ghost" onClick={downloadZip}><Icon name="download" /> Descargar ZIP</button><button className="ghost" onClick={() => triggerDownload(new Blob([blocksToJson(generated)], { type: 'application/json' }), `${code.toUpperCase()}-manifest.json`)}>JSON</button></div>}</section><section className="panel preview-panel"><div className="panel-heading"><div><h3>Vista previa</h3><p>Así se verá una hoja de distribución.</p></div><span className="preview-tag">PDF / ZIP</span></div><div className="sheet-preview"><div className="sheet-head"><b>{code.toUpperCase()}-H000001</b><span>BLOQUE {code.toUpperCase()}-001</span></div><div className="mini-cards">{[0,1,2,3].map(i => <MiniCard key={i} offset={i * 3} />)}</div><div className="sheet-foot"><span>4 cartones · centro libre</span><span>Hoja 1 de {sheets.toLocaleString('es-EC')}</span></div></div>{progress > 0 && <div className="progress-box"><div><b>{progress === 100 ? 'Lote listo para descargar' : 'Generando hojas…'}</b><span>{progress}% completado</span></div><div className="progress-track"><div style={{ width: `${progress}%` }} /></div></div>}<div className="generation-note"><Icon name="lock" /><span>La generación ya crea cartones reales en esta versión. Para 200.000 hojas se moverá a un trabajador de servidor en la siguiente fase.</span></div></section></div><div className="next-step"><span><Icon name="check" /> {done ? `${generated.length} bloques creados correctamente` : 'Generación lista para ejecutar'}</span><button className="text-button" onClick={() => setView('blocks')}>Ver mis bloques <Icon name="arrow" /></button></div></div>
+}
+
+function MiniCard({ offset }: { offset: number }) { return <div className="mini-card"><div className="mini-title"><span>B</span><span>I</span><span>N</span><span>G</span><span>O</span></div>{Array.from({ length: 25 }, (_, i) => <span key={i} className={i === 12 ? 'free' : ''}>{i === 12 ? '★' : ((i * 7 + offset * 3) % 74) + 1}</span>)}</div> }
+
+function Blocks({ blocks, setView }: { blocks: BingoBlock[]; setView: (view: View) => void }) {
+  const [downloading, setDownloading] = useState('')
+  const download = async (block: BingoBlock) => { setDownloading(block.code); triggerDownload(new Blob([createBlockPdf(block)], { type: 'application/pdf' }), `${block.code}.pdf`); window.setTimeout(() => setDownloading(''), 700) }
+  const downloadAll = async () => { if (!blocks.length) return; setDownloading('all'); const blob = await createBlocksZip(blocks); triggerDownload(blob, 'bingo-promax-studio-bloques.zip'); setDownloading('') }
+  const totalSheets = blocks.reduce((total, block) => total + block.pages, 0)
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">DISTRIBUCIÓN</div><h1>Bloques bajo control.</h1><p className="muted">Cada bloque contiene hasta 40 hojas y 160 cartones listos para entregar.</p></div><div className="game-buttons"><button className="ghost" onClick={downloadAll} disabled={!blocks.length || downloading !== ''}><Icon name="download" /> {downloading === 'all' ? 'Preparando ZIP…' : 'Descargar todo'}</button><button className="primary" onClick={() => setView('generator')}><Icon name="plus" /> Nuevo lote</button></div></div><div className="stats-grid compact-stats"><StatCard label="Bloques disponibles" value={String(blocks.length)} detail="Listos para descargar" accent="#f5c84b" icon="layers" /><StatCard label="Hojas en inventario" value={totalSheets.toLocaleString('es-EC')} detail="40 hojas por bloque" accent="#6ee7d1" icon="grid" /><StatCard label="Cartones distribuidos" value={(totalSheets * 4).toLocaleString('es-EC')} detail="Código único por cartón" accent="#bda1ff" icon="download" /></div><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">INVENTARIO DE DISTRIBUCIÓN</div><h3>Todos los bloques</h3></div><span className="preview-tag">{blocks.length ? 'GENERACIÓN LOCAL' : 'SIN LOTES'}</span></div>{blocks.length ? <div className="table-wrap"><table><thead><tr><th>Bloque</th><th>Rango de hojas</th><th>Contenido</th><th>Creado</th><th>Estado</th><th /></tr></thead><tbody>{blocks.map(block => <tr key={block.code}><td><b className="code-cell">{block.code}</b></td><td>{block.range}</td><td>{block.pages} hojas <span className="muted-inline">· {block.pages * 4} cartones</span></td><td>{new Date(block.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}</td><td><span className="status listo">{block.status}</span></td><td><button className="icon-button" title="Descargar PDF" onClick={() => download(block)}><Icon name="download" /></button></td></tr>)}</tbody></table></div> : <div className="empty-state"><span>▤</span><b>Aún no tienes bloques generados</b><p>Genera tu primer lote para ver aquí las hojas y sus archivos.</p><button className="primary" onClick={() => setView('generator')}>Crear primer lote <Icon name="arrow" /></button></div>}</section></div>
+}
+
+function Patterns() { const [patterns, setPatterns] = useState<Pattern[]>(() => { try { return JSON.parse(localStorage.getItem('bps-patterns') ?? '') } catch { return seedPatterns } }); const update = (items: Pattern[]) => { setPatterns(items); localStorage.setItem('bps-patterns', JSON.stringify(items)) }; const toggle = (id: string) => update(patterns.map(item => item.id === id ? { ...item, active: !item.active } : item)); const create = () => { const name = window.prompt('Nombre del nuevo patrón'); if (!name?.trim()) return; const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`; update([...patterns, { id, name: name.trim(), description: 'Patrón personalizado creado por el estudio.', group: 'Personalizados', color: '#f5c84b', cells: [0, 1, 2, 3, 4], active: false }]) }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">BIBLIOTECA DE FIGURAS</div><h1>Administra tus patrones.</h1><p className="muted">Selecciona las figuras que podrás usar en cada partida.</p></div><button className="primary" onClick={create}><Icon name="plus" /> Crear patrón</button></div><div className="pattern-summary"><div><span className="summary-orb">✦</span><div><b>{patterns.filter(p => p.active).length} patrones habilitados</b><small>Disponibles para nuevas partidas</small></div></div><div className="summary-chips"><span>● {patterns.filter(p => p.group === 'Clásicos').length} clásicos</span><span>✦ {patterns.filter(p => p.group === 'Letras').length} letras</span><span>⌘ {patterns.filter(p => p.group === 'Especiales').length} especiales</span></div></div><div className="pattern-grid">{patterns.map(pattern => <PatternCard key={pattern.id} pattern={pattern} onToggle={() => toggle(pattern.id)} />)}</div></div> }
+function PatternCard({ pattern, onToggle }: { pattern: Pattern; onToggle: () => void }) { return <article className={`pattern-card ${pattern.active ? 'pattern-active' : ''}`}><div className="pattern-card-head"><PatternIcon pattern={pattern} /><span className={`pattern-status ${pattern.active ? 'enabled' : ''}`}>{pattern.active ? 'En juego' : 'Inactivo'}</span></div><h3>{pattern.name}</h3><p>{pattern.description}</p><div className="pattern-actions"><button className={`outline-action ${pattern.active ? 'gold' : ''}`} onClick={onToggle}>{pattern.active ? 'Deshabilitar' : 'Habilitar'}</button><button className="icon-button">⌕</button></div><footer><span>{pattern.group}</span><span>{pattern.active ? 'Disponible' : 'Pausado'}</span></footer></article> }
+function PatternIcon({ pattern }: { pattern: Pattern }) { return <div className="pattern-icon" style={{ '--pattern-color': pattern.color } as CSSProperties}>{Array.from({ length: 25 }, (_, i) => <i className={pattern.cells.includes(i) ? 'on' : ''} key={i} />)}</div> }
+
+function Games({ selectedPatterns, setSelectedPatterns, blocks }: { selectedPatterns: string[]; setSelectedPatterns: (ids: string[]) => void; blocks: BingoBlock[] }) { const [started, setStarted] = useState(false); const [drawn, setDrawn] = useState<number[]>([]); const [winner, setWinner] = useState(''); const activePatterns = seedPatterns.filter(p => p.active); const card = blocks[0]?.sheets[0]?.cards[0] ?? demoCard; const togglePattern = (id: string) => setSelectedPatterns(selectedPatterns.includes(id) ? selectedPatterns.filter(p => p !== id) : [...selectedPatterns, id]); const draw = (n: number) => { if (!started || drawn.includes(n)) return; const next = [...drawn, n]; setDrawn(next); const drawnSet = new Set(next); const completed = activePatterns.filter(pattern => selectedPatterns.includes(pattern.id) && isPatternComplete(card, pattern.cells, drawnSet)); if (completed.length) setWinner(completed.map(pattern => pattern.name).join(' · ')) }; const reset = () => { setDrawn([]); setStarted(false); setWinner('') }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">PARTIDA ACTUAL <span className="live-pill">● {started ? 'EN JUEGO' : 'LISTA'}</span></div><h1>{started ? 'Partida en movimiento.' : 'Prepara una nueva partida.'}</h1><p className="muted">Elige los patrones y registra cada bolilla desde el teclado visual.</p></div><div className="game-buttons"><button className="ghost" onClick={reset}>Reiniciar</button><button className="primary" onClick={() => setStarted(true)}><Icon name="play" /> {started ? 'Partida activa' : 'Comenzar partida'}</button></div></div>{winner && <div className="winner-alert"><span>🏆</span><div><b>Patrón completado: {winner}</b><small>La tarjeta de demostración {card.id} cumple la modalidad seleccionada.</small></div><button className="ghost" onClick={() => setWinner('')}>Ocultar</button></div>}<div className="game-layout"><section className="panel game-board"><div className="game-board-head"><div><div className="eyebrow">CONTROL DE BOLILLAS</div><h3>Registrar nueva bolilla</h3></div><span className="no-duplicates"><Icon name="check" /> Sin duplicados</span></div><div className="latest-row"><div className="last-ball"><small>ÚLTIMA BOLILLA</small><b>{drawn.at(-1) ?? '—'}</b><span>{drawn.length ? 'Registrada ahora' : 'Esperando inicio'}</span></div><div className="draw-history"><div className="history-title"><b>Historial de bolillas</b><span>{drawn.length} / 75</span></div><div className="history-balls">{drawn.slice(-12).reverse().map(n => <i key={n}>{n}</i>)}</div><div className="progress-track"><div style={{ width: `${(drawn.length / 75) * 100}%` }} /></div></div></div><div className="ball-grid">{Array.from({ length: 75 }, (_, i) => i + 1).map(n => <button className={drawn.includes(n) ? 'drawn' : ''} key={n} onClick={() => draw(n)} disabled={!started}>{n}</button>)}</div></section><aside className="panel selected-patterns"><div className="eyebrow">PATRONES EN JUEGO</div><h3>Selecciona las figuras</h3><p>Se verificarán automáticamente con cada bolilla.</p><div className="pattern-select-list">{activePatterns.map(pattern => <button className={`select-pattern ${selectedPatterns.includes(pattern.id) ? 'chosen' : ''}`} key={pattern.id} onClick={() => togglePattern(pattern.id)}><PatternIcon pattern={pattern} /><span><b>{pattern.name}</b><small>{pattern.group}</small></span><span className="check-circle">{selectedPatterns.includes(pattern.id) ? '✓' : ''}</span></button>)}</div><div className="selected-count">{selectedPatterns.length} patrones seleccionados · {blocks.length ? 'cartones cargados' : 'modo demostración'}</div></aside></div></div> }
+
+function Users() { return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">El acceso inicial está restringido a los desarrolladores.</p></div><button className="primary"><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las nuevas cuentas podrán administrarse en la siguiente fase.</p></div></div><div className="user-list"><UserRow email="byvera198@gmail.com" role="Desarrollador" initials="BV" /><UserRow email="bveraalvear@gmail.com" role="Desarrollador" initials="BA" /></div></section><div className="coming-card"><span>✦</span><div><b>Administradores y operadores próximamente</b><p>La arquitectura ya contempla roles separados para generación, distribución y control de partidas.</p></div></div></div> }
+function UserRow({ email, role, initials }: { email: string; role: string; initials: string }) { return <div className="user-row"><div className="avatar">{initials}</div><div><b>{email}</b><span>{role}</span></div><span className="status listo">Activo</span><button className="icon-button">⋯</button></div> }
+
+function Audit() { return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost">Exportar registro <Icon name="download" /></button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Últimas operaciones del entorno.</p></div><span className="preview-tag">HOY</span></div><div className="audit-list"><AuditRow icon="spark" color="#f5c84b" title="Lote BP-2026-003 generado" actor="byvera198@gmail.com" time="10:42" /><AuditRow icon="download" color="#6ee7d1" title="Bloque BP-2026-002 descargado" actor="byvera198@gmail.com" time="09:18" /><AuditRow icon="play" color="#b9ed2c" title="Partida Nueva jornada finalizada" actor="bveraalvear@gmail.com" time="Ayer, 18:42" /><AuditRow icon="users" color="#bda1ff" title="Sesión iniciada" actor="bveraalvear@gmail.com" time="Ayer, 09:15" /></div></section></div> }
+function AuditRow({ icon, color, title, actor, time }: { icon: string; color: string; title: string; actor: string; time: string }) { return <div className="audit-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{actor}</span></div><time>{time}</time></div> }
+
+function App() { const [email, setEmail] = useState<string | null>(() => localStorage.getItem('bps-email')); const [view, setView] = useState<View>('dashboard'); const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } }); const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a']); if (!email) return <Login onLogin={(value) => { localStorage.setItem('bps-email', value); setEmail(value) }} />; const logout = () => { localStorage.removeItem('bps-email'); setEmail(null) }; const onGenerated = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); localStorage.setItem('bps-blocks', JSON.stringify(nextBlocks)) }; const content = { dashboard: <Dashboard setView={setView} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} />, games: <Games selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, users: <Users />, audit: <Audit /> }[view]; return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} /><main className="main-area"><Topbar view={view} onLogout={logout} />{content}</main></div> }
+
+createRoot(document.getElementById('root')!).render(<App />)
