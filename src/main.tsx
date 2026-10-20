@@ -7,6 +7,7 @@ import { clearStudioGenerationCheckpoint, createStudioAdmin, createStudioPartyAc
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
+const STUDIO_AUTH_REDIRECT_URL = import.meta.env.VITE_STUDIO_AUTH_REDIRECT_URL ?? 'https://bingopromaxstudio.pages.dev'
 
 type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'integration' | 'users' | 'network' | 'audit'
 type Pattern = { id: string; name: string; description: string; group: string; color: string; cells: number[]; active: boolean }
@@ -664,7 +665,7 @@ function App() {
   }, [currentMember, view])
 
   if (!authReady) return <main className="login-shell"><section className="login-card"><Logo /><p className="muted">Verificando la sesión segura…</p></section></main>
-  if (!email) return <Login onLogin={async (value) => { const invited = ALLOWED_EMAILS.includes(value) ? true : (await supabase.rpc('studio_login_allowed', { p_email: value })).data === true; if (!invited) throw new Error('Esta cuenta no ha sido creada por un desarrollador.'); const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: true, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
+  if (!email) return <Login onLogin={async (value) => { const invited = ALLOWED_EMAILS.includes(value) ? true : (await supabase.rpc('studio_login_allowed', { p_email: value })).data === true; if (!invited) throw new Error('Esta cuenta no ha sido creada por un desarrollador.'); const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: true, emailRedirectTo: STUDIO_AUTH_REDIRECT_URL } }); if (error) throw error }} />
 
   const logout = async () => { await supabase.auth.signOut(); localStorage.removeItem('bps-email'); setEmail(null) }
   const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); if (update === 'complete') void persistBlocks(merged, true, activeTenantId); return merged }) }

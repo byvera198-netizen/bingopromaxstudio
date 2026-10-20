@@ -4,6 +4,7 @@
 
 1. Copia `.env.example` como `.env`.
 2. Configura `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` con los valores públicos del proyecto Supabase.
+3. Configura `VITE_STUDIO_AUTH_REDIRECT_URL` con `https://bingopromaxstudio.pages.dev`.
 3. Ejecuta `npm install` y después `npm run build`.
 
 La clave debe ser la publishable/anon. Nunca coloques una `service_role` en este proyecto ni en variables `VITE_*`.
@@ -39,7 +40,13 @@ La migración crea inventario de bloques, partidas, patrones, auditoría, miembr
 - `byvera198@gmail.com`
 - `bveraalvear@gmail.com`
 
-En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL local y la URL de producción a `Redirect URLs`.
+En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL de Studio a `Redirect URLs`:
+
+```text
+https://bingopromaxstudio.pages.dev
+```
+
+Conserva sin cambios la `Site URL` y las `Redirect URLs` que utiliza Bingo Control ProMax. Studio usa `emailRedirectTo` explícito para no redirigir nunca al dominio de ProMax.
 
 ## 3. Validación mínima antes de publicar
 
