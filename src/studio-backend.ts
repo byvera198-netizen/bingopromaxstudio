@@ -16,6 +16,28 @@ type StudioBlockRow = {
   created_by?: string | null
 }
 
+export type StudioGame = {
+  id: string
+  name: string
+  date: string
+  prize: string
+  status: 'ready' | 'running' | 'paused' | 'finished'
+  activePatternIds: string[]
+  drawnNumbers: number[]
+  winnerHistory: Array<{ pattern: string; count: number; ball: number }>
+  notes: string
+}
+
+export type StudioPattern = {
+  id: string
+  name: string
+  description: string
+  group: string
+  color: string
+  cells: number[]
+  active: boolean
+}
+
 function asBlock(value: unknown): BingoBlock | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const block = value as Partial<BingoBlock>
@@ -96,4 +118,107 @@ export async function writeStudioAudit(action: string, detail: string) {
     actor_email: user.data.user.email.toLowerCase(),
   })
   if (result.error) throw result.error
+}
+
+function mapGame(row: Record<string, unknown>): StudioGame {
+  const patterns = Array.isArray(row.active_pattern_ids) ? row.active_pattern_ids : []
+  const draws = Array.isArray(row.drawn_numbers) ? row.drawn_numbers : []
+  const winners = Array.isArray(row.winner_history) ? row.winner_history : []
+  return {
+    id: String(row.id),
+    name: String(row.name ?? 'Partida Studio'),
+    date: String(row.game_date ?? ''),
+    prize: String(row.prize ?? ''),
+    status: (['ready', 'running', 'paused', 'finished'].includes(String(row.status)) ? String(row.status) : 'ready') as StudioGame['status'],
+    activePatternIds: patterns.filter((value): value is string => typeof value === 'string'),
+    drawnNumbers: draws.filter((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 75),
+    winnerHistory: winners.flatMap((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+      const item = value as Record<string, unknown>
+      const pattern = String(item.pattern ?? '')
+      const count = Number(item.count)
+      const ball = Number(item.ball)
+      return pattern && Number.isInteger(count) && count >= 0 && Number.isInteger(ball) && ball >= 1 && ball <= 75 ? [{ pattern, count, ball }] : []
+    }),
+    notes: String(row.notes ?? ''),
+  }
+}
+
+export async function loadStudioGame(): Promise<StudioGame | null> {
+  const userId = await currentUserId()
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from('studio_games')
+    .select('id,name,game_date,prize,status,active_pattern_ids,drawn_numbers,winner_history,notes')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data ? mapGame(data as Record<string, unknown>) : null
+}
+
+export async function syncStudioGame(game: StudioGame) {
+  const userId = await currentUserId()
+  if (!userId) return
+  const result = await supabase.from('studio_games').upsert({
+    id: game.id,
+    name: game.name,
+    game_date: game.date || null,
+    prize: game.prize,
+    status: game.status,
+    active_pattern_ids: game.activePatternIds,
+    drawn_numbers: game.drawnNumbers,
+    winner_history: game.winnerHistory,
+    notes: game.notes,
+    created_by: userId,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'id' })
+  if (result.error) throw result.error
+}
+
+function mapPattern(row: Record<string, unknown>): StudioPattern | null {
+  const cells = Array.isArray(row.cells) ? row.cells.filter((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 25) : []
+  const id = String(row.id ?? '')
+  const name = String(row.name ?? '')
+  if (!id || !name || !cells.length) return null
+  return {
+    id,
+    name,
+    description: String(row.description ?? ''),
+    group: String(row.pattern_group ?? 'Personalizados'),
+    color: String(row.color ?? '#f5c84b'),
+    cells: Array.from(new Set(cells)),
+    active: row.active === true,
+  }
+}
+
+export async function loadStudioPatterns(): Promise<StudioPattern[]> {
+  const userId = await currentUserId()
+  if (!userId) return []
+  const { data, error } = await supabase
+    .from('studio_patterns')
+    .select('id,name,description,pattern_group,color,cells,active')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> | null ?? []).map(mapPattern).filter((pattern): pattern is StudioPattern => Boolean(pattern))
+}
+
+export async function syncStudioPatterns(patterns: StudioPattern[]) {
+  const userId = await currentUserId()
+  if (!userId || !patterns.length) return
+  const rows = patterns.map((pattern) => ({
+    id: pattern.id,
+    name: pattern.name,
+    description: pattern.description,
+    pattern_group: pattern.group,
+    color: pattern.color,
+    cells: pattern.cells,
+    active: pattern.active,
+    created_by: userId,
+    updated_at: new Date().toISOString(),
+  }))
+  for (let offset = 0; offset < rows.length; offset += SYNC_CHUNK_SIZE) {
+    const result = await supabase.from('studio_patterns').upsert(rows.slice(offset, offset + SYNC_CHUNK_SIZE), { onConflict: 'id' })
+    if (result.error) throw result.error
+  }
 }

@@ -82,11 +82,18 @@ create table if not exists public.studio_games (
   prize text not null default '',
   status text not null default 'ready' check (status in ('ready', 'running', 'paused', 'finished')),
   active_pattern_ids jsonb not null default '[]'::jsonb,
+  drawn_numbers jsonb not null default '[]'::jsonb,
+  winner_history jsonb not null default '[]'::jsonb,
   notes text not null default '',
   created_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.studio_games
+  add column if not exists drawn_numbers jsonb not null default '[]'::jsonb;
+alter table public.studio_games
+  add column if not exists winner_history jsonb not null default '[]'::jsonb;
 
 create table if not exists public.studio_audit_events (
   id uuid primary key default gen_random_uuid(),

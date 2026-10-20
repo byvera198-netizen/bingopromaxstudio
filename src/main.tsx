@@ -3,7 +3,7 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
-import { loadStudioBlocks, syncStudioBlock, syncStudioInventory, writeStudioAudit } from './studio-backend'
+import { loadStudioBlocks, loadStudioGame, loadStudioPatterns, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -245,7 +245,25 @@ function DeliveryModal({ block, distributor, notes, setDistributor, setNotes, on
 function Blocks({ blocks: initialBlocks, setView, onUpdate }: { blocks: BingoBlock[]; setView: (view: View) => void; onUpdate?: (code: string, patch: Partial<BingoBlock>) => void }) { const [blocks, setBlocks] = useState(initialBlocks); const [downloading, setDownloading] = useState(''); const [query, setQuery] = useState(''); const [statusFilter, setStatusFilter] = useState<'Todos' | BingoBlock['status']>('Todos'); const [distributorFilter, setDistributorFilter] = useState('Todos'); const [deliveryBlock, setDeliveryBlock] = useState<BingoBlock | null>(null); const [deliveryDistributor, setDeliveryDistributor] = useState(''); const [deliveryNotes, setDeliveryNotes] = useState(''); const applyUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => current.map(block => block.code === code ? { ...block, ...patch } : block)); if (onUpdate) onUpdate(code, patch); else { try { const stored: BingoBlock[] = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]'); localStorage.setItem('bps-blocks', JSON.stringify(stored.map(block => block.code === code ? { ...block, ...patch } : block))) } catch { /* storage unavailable */ } } }; const download = (block: BingoBlock) => { setDownloading(block.code); triggerDownload(new Blob([createBlockPdf(block)], { type: 'application/pdf' }), `${block.code}.pdf`); applyUpdate(block.code, { status: 'Descargado' }); appendAudit('DESCARGA_BLOQUE', `Bloque ${block.code} descargado`); window.setTimeout(() => setDownloading(''), 700) }; const openDelivery = (block: BingoBlock) => { setDeliveryBlock(block); setDeliveryDistributor(block.distributor ?? ''); setDeliveryNotes(block.notes ?? '') }; const confirmDelivery = () => { if (!deliveryBlock || !deliveryDistributor.trim()) return; const recipient = deliveryDistributor.trim(); applyUpdate(deliveryBlock.code, { status: 'Entregado', distributor: recipient, notes: deliveryNotes.trim(), deliveredAt: new Date().toISOString() }); appendAudit('ENTREGA_BLOQUE', `Bloque ${deliveryBlock.code} entregado a ${recipient}`); setDeliveryBlock(null); setDeliveryDistributor(''); setDeliveryNotes('') }; const downloadAll = async () => { if (!blocks.length) return; setDownloading('all'); const blob = await createBlocksZip(blocks); triggerDownload(blob, 'bingo-promax-studio-bloques.zip'); appendAudit('DESCARGA_LOTE', `${blocks.length} bloques descargados en ZIP`); setDownloading('') }; const distributors = Array.from(new Set(blocks.map(block => block.distributor).filter((value): value is string => Boolean(value)))).sort(); const visibleBlocks = blocks.filter(block => { const normalized = query.trim().toLowerCase(); const matchesQuery = !normalized || [block.code, block.range, block.distributor ?? '', block.notes ?? ''].some(value => value.toLowerCase().includes(normalized)); const matchesStatus = statusFilter === 'Todos' || block.status === statusFilter; const matchesDistributor = distributorFilter === 'Todos' || (block.distributor ?? 'Sin asignar') === distributorFilter; return matchesQuery && matchesStatus && matchesDistributor }); const totalSheets = blocks.reduce((total, block) => total + block.pages, 0); const deliveredSheets = blocks.filter(block => block.status === 'Entregado').reduce((total, block) => total + block.pages, 0); return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">DISTRIBUCIÓN</div><h1>Bloques bajo control.</h1><p className="muted">Cada bloque contiene hasta 40 hojas y 160 cartones listos para entregar.</p></div><div className="game-buttons"><button className="ghost" onClick={downloadAll} disabled={!blocks.length || downloading !== ''}><Icon name="download" /> {downloading === 'all' ? 'Preparando ZIP…' : 'Descargar todo'}</button><button className="primary" onClick={() => setView('generator')}><Icon name="plus" /> Nuevo lote</button></div></div><div className="stats-grid compact-stats"><StatCard label="Bloques disponibles" value={String(blocks.length)} detail="Listos para descargar" accent="#f5c84b" icon="layers" /><StatCard label="Hojas en inventario" value={totalSheets.toLocaleString('es-EC')} detail="Todos los estados" accent="#6ee7d1" icon="grid" /><StatCard label="Cartones entregados" value={(deliveredSheets * 4).toLocaleString('es-EC')} detail={`${deliveredSheets.toLocaleString('es-EC')} hojas entregadas`} accent="#bda1ff" icon="download" /></div><section className="panel distribution-toolbar"><label><span>Buscar bloque</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Código, rango o nota…" /></label><label><span>Estado</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Todos' | BingoBlock['status'])}><option>Todos</option><option>Listo</option><option>Descargado</option><option>Entregado</option></select></label><label><span>Distribuidor</span><select value={distributorFilter} onChange={event => setDistributorFilter(event.target.value)}><option>Todos</option>{distributors.map(distributor => <option key={distributor}>{distributor}</option>)}<option>Sin asignar</option></select></label><div className="filter-result"><b>{visibleBlocks.length}</b><span>de {blocks.length} bloques</span></div></section><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">INVENTARIO DE DISTRIBUCIÓN</div><h3>Todos los bloques</h3></div><span className="preview-tag">{blocks.length ? 'GENERACIÓN LOCAL' : 'SIN LOTES'}</span></div>{visibleBlocks.length ? <div className="table-wrap"><table><thead><tr><th>Bloque</th><th>Rango de hojas</th><th>Contenido</th><th>Creado</th><th>Distribuidor</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleBlocks.map(block => <tr key={block.code}><td><b className="code-cell">{block.code}</b></td><td>{block.range}</td><td>{block.pages} hojas <span className="muted-inline">· {block.pages * 4} cartones</span></td><td>{new Date(block.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{block.distributor ?? 'Sin asignar'}{block.deliveredAt && <small className="table-subline">{new Date(block.deliveredAt).toLocaleDateString('es-EC')}{block.notes ? ` · ${block.notes}` : ''}</small>}</td><td><span className={`status ${block.status === 'Entregado' ? 'entregado' : 'listo'}`}>{block.status}</span></td><td><div className="table-actions"><button className="icon-button" title="Descargar PDF" onClick={() => download(block)}><Icon name="download" /></button>{block.status !== 'Entregado' && <button className="ghost compact" onClick={() => openDelivery(block)}>Entregar</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><span>▤</span><b>{blocks.length ? 'No hay coincidencias' : 'Aún no tienes bloques generados'}</b><p>{blocks.length ? 'Prueba con otro código, estado o distribuidor.' : 'Genera tu primer lote para ver aquí las hojas y sus archivos.'}</p>{!blocks.length && <button className="primary" onClick={() => setView('generator')}>Crear primer lote <Icon name="arrow" /></button>}</div>}</section>{deliveryBlock && <DeliveryModal block={deliveryBlock} distributor={deliveryDistributor} notes={deliveryNotes} setDistributor={setDeliveryDistributor} setNotes={setDeliveryNotes} onClose={() => setDeliveryBlock(null)} onConfirm={confirmDelivery} />}</div> }
 
 function PatternEditor({ initial, onClose, onSave }: { initial: Pattern; onClose: () => void; onSave: (pattern: Pattern) => void }) { const [draft, setDraft] = useState(initial); const toggleCell = (index: number) => setDraft(current => ({ ...current, cells: current.cells.includes(index) ? current.cells.filter(cell => cell !== index) : [...current.cells, index].sort((a, b) => a - b) })); return <div className="modal-backdrop"><section className="pattern-editor"><div className="panel-heading"><div><div className="eyebrow">EDITOR VISUAL 5 × 5</div><h3>{initial.id ? 'Editar patrón' : 'Crear patrón'}</h3><p>Selecciona las casillas que deben completarse.</p></div><button className="icon-button" onClick={onClose}>×</button></div><div className="editor-layout"><div className="editor-grid">{Array.from({ length: 25 }, (_, index) => <button className={draft.cells.includes(index) ? 'selected' : ''} key={index} onClick={() => toggleCell(index)}>{index === 12 ? '★' : ''}</button>)}</div><div className="editor-fields"><label>Nombre<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label><label>Grupo<select value={draft.group} onChange={event => setDraft({ ...draft, group: event.target.value })}><option>Clásicos</option><option>Letras</option><option>Números</option><option>Especiales</option><option>Personalizados</option></select></label><label>Color<input type="color" value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label><label>Descripción<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label><div className="editor-actions"><button className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={!draft.name.trim() || draft.cells.length === 0} onClick={() => onSave({ ...draft, id: draft.id || `${draft.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}` })}>Guardar patrón</button></div></div></div></section></div> }
-function Patterns() { const [patterns, setPatterns] = useState<Pattern[]>(readPatternCatalog); const [editing, setEditing] = useState<Pattern | null>(null); const update = (items: Pattern[]) => { setPatterns(items); localStorage.setItem('bps-patterns', JSON.stringify(items)) }; const toggle = (id: string) => update(patterns.map(item => item.id === id ? { ...item, active: !item.active } : item)); const save = (pattern: Pattern) => { const next = patterns.some(item => item.id === pattern.id) ? patterns.map(item => item.id === pattern.id ? pattern : item) : [...patterns, pattern]; update(next); setEditing(null) }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">BIBLIOTECA DE FIGURAS</div><h1>Administra tus patrones.</h1><p className="muted">Selecciona las figuras que podrás usar en cada partida.</p></div><button className="primary" onClick={() => setEditing({ id: '', name: '', description: 'Patrón personalizado creado por el estudio.', group: 'Personalizados', color: '#f5c84b', cells: [12], active: false })}><Icon name="plus" /> Crear patrón</button></div><div className="pattern-summary"><div><span className="summary-orb">✦</span><div><b>{patterns.filter(p => p.active).length} patrones habilitados</b><small>{patterns.length} patrones disponibles</small></div></div><div className="summary-chips"><span>● {patterns.filter(p => p.group === 'Clásicos').length} clásicos</span><span>✦ {patterns.filter(p => p.group === 'Letras').length} letras</span><span>⌘ {patterns.filter(p => p.group === 'Especiales').length} especiales</span></div></div><div className="pattern-grid">{patterns.map(pattern => <PatternCard key={pattern.id} pattern={pattern} onToggle={() => toggle(pattern.id)} onEdit={() => setEditing(pattern)} />)}</div>{editing && <PatternEditor initial={editing} onClose={() => setEditing(null)} onSave={save} />}</div> }
+function Patterns() {
+  const [patterns, setPatterns] = useState<Pattern[]>(readPatternCatalog)
+  const [editing, setEditing] = useState<Pattern | null>(null)
+  useEffect(() => {
+    let active = true
+    void loadStudioPatterns().then(remote => {
+      if (!active || !remote.length) return
+      const local = readPatternCatalog()
+      const merged = local.map(pattern => remote.find(item => item.id === pattern.id) ?? pattern)
+      remote.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      setPatterns(merged)
+    }).catch(() => { /* Local catalog remains available offline. */ })
+    return () => { active = false }
+  }, [])
+  const update = (items: Pattern[]) => { setPatterns(items); localStorage.setItem('bps-patterns', JSON.stringify(items)); void syncStudioPatterns(items).catch(() => { /* Local catalog remains available offline. */ }) }
+  const toggle = (id: string) => update(patterns.map(item => item.id === id ? { ...item, active: !item.active } : item))
+  const save = (pattern: Pattern) => { const next = patterns.some(item => item.id === pattern.id) ? patterns.map(item => item.id === pattern.id ? pattern : item) : [...patterns, pattern]; update(next); setEditing(null) }
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">BIBLIOTECA DE FIGURAS</div><h1>Administra tus patrones.</h1><p className="muted">Selecciona las figuras que podrás usar en cada partida.</p></div><button className="primary" onClick={() => setEditing({ id: '', name: '', description: 'Patrón personalizado creado por el estudio.', group: 'Personalizados', color: '#f5c84b', cells: [12], active: false })}><Icon name="plus" /> Crear patrón</button></div><div className="pattern-summary"><div><span className="summary-orb">✦</span><div><b>{patterns.filter(p => p.active).length} patrones habilitados</b><small>{patterns.length} patrones disponibles</small></div></div><div className="summary-chips"><span>● {patterns.filter(p => p.group === 'Clásicos').length} clásicos</span><span>✦ {patterns.filter(p => p.group === 'Letras').length} letras</span><span>⌘ {patterns.filter(p => p.group === 'Especiales').length} especiales</span></div></div><div className="pattern-grid">{patterns.map(pattern => <PatternCard key={pattern.id} pattern={pattern} onToggle={() => toggle(pattern.id)} onEdit={() => setEditing(pattern)} />)}</div>{editing && <PatternEditor initial={editing} onClose={() => setEditing(null)} onSave={save} />}</div>
+}
 function PatternCard({ pattern, onToggle, onEdit }: { pattern: Pattern; onToggle: () => void; onEdit: () => void }) { return <article className={`pattern-card ${pattern.active ? 'pattern-active' : ''}`}><div className="pattern-card-head"><PatternIcon pattern={pattern} /><span className={`pattern-status ${pattern.active ? 'enabled' : ''}`}>{pattern.active ? 'En juego' : 'Inactivo'}</span></div><h3>{pattern.name}</h3><p>{pattern.description}</p><div className="pattern-actions"><button className={`outline-action ${pattern.active ? 'gold' : ''}`} onClick={onToggle}>{pattern.active ? 'Deshabilitar' : 'Habilitar'}</button><button className="icon-button" onClick={onEdit} title="Editar patrón">⌕</button></div><footer><span>{pattern.group}</span><span>{pattern.active ? 'Disponible' : 'Pausado'}</span></footer></article> }
 function PatternIcon({ pattern }: { pattern: Pattern }) { return <div className="pattern-icon" style={{ '--pattern-color': pattern.color } as CSSProperties}>{Array.from({ length: 25 }, (_, i) => <i className={pattern.cells.includes(i) ? 'on' : ''} key={i} />)}</div> }
 
@@ -257,6 +275,65 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks }: { sele
   const [search, setSearch] = useState('')
   const [winner, setWinner] = useState<{ pattern: Pattern; cards: BingoCard[] } | null>(null)
   const [winnerHistory, setWinnerHistory] = useState<{ pattern: string; count: number; ball: number }[]>([])
+  const [gameId, setGameId] = useState(() => localStorage.getItem('bps-current-game') ?? crypto.randomUUID())
+  const [gameHydrated, setGameHydrated] = useState(false)
+  useEffect(() => {
+    let active = true
+    void loadStudioGame().then((remote) => {
+      if (!active) return
+      if (remote) {
+        setGameId(remote.id)
+        localStorage.setItem('bps-current-game', remote.id)
+        setStarted(remote.status === 'running')
+        setDrawn(remote.drawnNumbers)
+        setWinnerHistory(remote.winnerHistory)
+        if (remote.activePatternIds.length) setSelectedPatterns(remote.activePatternIds)
+      } else {
+        try {
+          const local = JSON.parse(localStorage.getItem('bps-current-game-state') ?? 'null') as StudioGame | null
+          if (local) {
+            setGameId(local.id)
+            setStarted(local.status === 'running')
+            setDrawn(local.drawnNumbers)
+            setWinnerHistory(local.winnerHistory)
+            if (local.activePatternIds.length) setSelectedPatterns(local.activePatternIds)
+          }
+        } catch { /* Start a new local game when no saved state exists. */ }
+      }
+      setGameHydrated(true)
+    }).catch(() => {
+      if (!active) return
+      try {
+        const local = JSON.parse(localStorage.getItem('bps-current-game-state') ?? 'null') as StudioGame | null
+        if (local) {
+          setGameId(local.id)
+          setStarted(local.status === 'running')
+          setDrawn(local.drawnNumbers)
+          setWinnerHistory(local.winnerHistory)
+          if (local.activePatternIds.length) setSelectedPatterns(local.activePatternIds)
+        }
+      } catch { /* Start a new local game when no saved state exists. */ }
+      setGameHydrated(true)
+    })
+    return () => { active = false }
+  }, [setSelectedPatterns])
+  useEffect(() => {
+    if (!gameHydrated) return
+    const game: StudioGame = {
+      id: gameId,
+      name: 'Partida Studio',
+      date: new Date().toISOString().slice(0, 10),
+      prize: '',
+      status: started ? 'running' : 'ready',
+      activePatternIds: selectedPatterns,
+      drawnNumbers: drawn,
+      winnerHistory,
+      notes: 'Partida administrada desde Bingo ProMax Studio.',
+    }
+    localStorage.setItem('bps-current-game', gameId)
+    localStorage.setItem('bps-current-game-state', JSON.stringify(game))
+    void syncStudioGame(game).catch(() => { /* Local game state remains available offline. */ })
+  }, [drawn, gameHydrated, gameId, selectedPatterns, started, winnerHistory])
   const activePatterns = readPatternCatalog().filter(pattern => pattern.active)
   const cards = blocks.flatMap(block => block.sheets.flatMap(sheet => sheet.cards))
   const gameCards = cards.length ? cards : [demoCard]
@@ -330,7 +407,14 @@ function App() {
     return () => { mounted = false; listener.subscription.unsubscribe() }
   }, [])
 
-  useEffect(() => { if (!blocks.length) void loadPersistedBlocks().then((stored) => { if (stored.length) setBlocks(stored) }) }, [blocks.length])
+  useEffect(() => {
+    let active = true
+    void loadPersistedBlocks().then((stored) => {
+      if (!active || !stored.length) return
+      setBlocks((current) => current.length ? current : stored)
+    })
+    return () => { active = false }
+  }, [])
 
   if (!authReady) return <main className="login-shell"><section className="login-card"><Logo /><p className="muted">Verificando la sesión segura…</p></section></main>
   if (!email) return <Login onLogin={async (value) => { const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
