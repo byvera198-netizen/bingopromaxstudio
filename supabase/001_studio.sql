@@ -43,6 +43,26 @@ as $$
   select coalesce(public.studio_actor_role() in ('developer', 'admin'), false);
 $$;
 
+create or replace function public.studio_can_access(module_name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    public.studio_actor_role() in ('developer', 'admin')
+    or exists (
+      select 1
+      from public.studio_members
+      where lower(email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+        and active = true
+        and coalesce((permissions ->> module_name)::boolean, false) = true
+    ),
+    false
+  );
+$$;
+
 create table if not exists public.studio_campaigns (
   code text primary key,
   name text not null,
@@ -125,31 +145,31 @@ create policy studio_members_read on public.studio_members
 
 drop policy if exists studio_campaigns_manage on public.studio_campaigns;
 create policy studio_campaigns_manage on public.studio_campaigns
-  for all using (public.studio_can_manage())
-  with check (public.studio_can_manage());
+  for all using (public.studio_can_access('generator') or public.studio_can_access('blocks'))
+  with check (public.studio_can_access('generator') or public.studio_can_access('blocks'));
 
 drop policy if exists studio_blocks_manage on public.studio_blocks;
 create policy studio_blocks_manage on public.studio_blocks
-  for all using (public.studio_can_manage())
-  with check (public.studio_can_manage());
+  for all using (public.studio_can_access('blocks'))
+  with check (public.studio_can_access('blocks'));
 
 drop policy if exists studio_patterns_manage on public.studio_patterns;
 create policy studio_patterns_manage on public.studio_patterns
-  for all using (public.studio_can_manage())
-  with check (public.studio_can_manage());
+  for all using (public.studio_can_access('patterns'))
+  with check (public.studio_can_access('patterns'));
 
 drop policy if exists studio_games_manage on public.studio_games;
 create policy studio_games_manage on public.studio_games
-  for all using (public.studio_can_manage())
-  with check (public.studio_can_manage());
+  for all using (public.studio_can_access('games'))
+  with check (public.studio_can_access('games'));
 
 drop policy if exists studio_audit_insert on public.studio_audit_events;
 create policy studio_audit_insert on public.studio_audit_events
-  for insert with check (public.studio_can_manage());
+  for insert with check (public.studio_actor_role() is not null);
 
 drop policy if exists studio_audit_read on public.studio_audit_events;
 create policy studio_audit_read on public.studio_audit_events
-  for select using (public.studio_can_manage());
+  for select using (public.studio_can_access('audit'));
 
 create index if not exists studio_blocks_campaign_idx on public.studio_blocks(campaign_code, created_at);
 create index if not exists studio_blocks_status_idx on public.studio_blocks(status, updated_at);

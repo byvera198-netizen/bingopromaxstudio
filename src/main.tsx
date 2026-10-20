@@ -11,6 +11,15 @@ const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
 type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'integration' | 'users' | 'audit'
 type Pattern = { id: string; name: string; description: string; group: string; color: string; cells: number[]; active: boolean }
 type AuditEvent = { id: string; action: string; detail: string; actor: string; createdAt: string }
+const permissionOptions: Array<{ id: View; label: string }> = [
+  { id: 'dashboard', label: 'Resumen' },
+  { id: 'generator', label: 'Generador' },
+  { id: 'blocks', label: 'Bloques' },
+  { id: 'games', label: 'Partidas' },
+  { id: 'patterns', label: 'Patrones' },
+  { id: 'integration', label: 'Integración' },
+  { id: 'audit', label: 'Auditoría' },
+]
 
 const BLOCK_DB_NAME = 'bingo-promax-studio'
 const BLOCK_DB_VERSION = 1
@@ -134,6 +143,15 @@ function Icon({ name }: { name: string }) {
   return <span className="icon" aria-hidden="true">{icons[name] ?? '•'}</span>
 }
 
+function canAccessView(member: StudioMember | null, view: View) {
+  if (!member || member.role === 'developer' || member.role === 'admin') return true
+  return member.permissions[view] === true
+}
+
+function roleLabel(role: StudioMember['role'] | undefined) {
+  return role === 'developer' ? 'Desarrollador' : role === 'admin' ? 'Administrador' : 'Operador'
+}
+
 function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
@@ -174,15 +192,15 @@ function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
   </main>
 }
 
-function Sidebar({ view, setView, email, blocks }: { view: View; setView: (view: View) => void; email: string; blocks: BingoBlock[] }) {
+function Sidebar({ view, setView, email, blocks, member }: { view: View; setView: (view: View) => void; email: string; blocks: BingoBlock[]; member: StudioMember | null }) {
   const sections = [
     { label: 'OPERACIÓN', items: [['dashboard', 'grid', 'Resumen'], ['generator', 'spark', 'Generar cartones'], ['blocks', 'layers', 'Bloques y hojas'], ['games', 'play', 'Sala de juego']] },
     { label: 'CONFIGURACIÓN', items: [['patterns', 'spark', 'Patrones'], ['integration', 'arrow', 'Integración ProMax'], ['users', 'users', 'Usuarios'], ['audit', 'audit', 'Auditoría']] },
   ] as const
   return <aside className="sidebar">
     <div className="sidebar-top"><Logo compact /><button className="collapse" aria-label="Contraer menú" disabled>‹</button></div>
-    <div className="profile"><div className="avatar">{email[0].toUpperCase()}</div><div><strong>Desarrollador</strong><span>{email}</span></div><span className="online" /></div>
-    <nav>{sections.map(section => <div className="nav-section" key={section.label}><div className="nav-label">{section.label}</div>{section.items.map(([id, icon, label]) => <button key={id} className={`nav-item ${view === id ? 'selected' : ''}`} onClick={() => setView(id as View)}><Icon name={icon} /><span>{label}</span>{id === 'blocks' && <em>{blocks.length}</em>}</button>)}</div>)}</nav>
+    <div className="profile"><div className="avatar">{email[0].toUpperCase()}</div><div><strong>{roleLabel(member?.role)}</strong><span>{email}</span></div><span className="online" /></div>
+    <nav>{sections.map(section => <div className="nav-section" key={section.label}><div className="nav-label">{section.label}</div>{section.items.filter(([id]) => canAccessView(member, id as View)).map(([id, icon, label]) => <button key={id} className={`nav-item ${view === id ? 'selected' : ''}`} onClick={() => setView(id as View)}><Icon name={icon} /><span>{label}</span>{id === 'blocks' && <em>{blocks.length}</em>}</button>)}</div>)}</nav>
     <div className="sidebar-bottom"><div className="plan-card"><span className="plan-icon">✦</span><div><b>Studio Premium</b><small>Entorno protegido</small></div></div><button className="nav-item"><Icon name="settings" /><span>Configuración</span></button></div>
   </aside>
 }
@@ -368,20 +386,21 @@ function Users({ currentMember }: { currentMember: StudioMember | null }) {
   const [members, setMembers] = useState<StudioMember[]>([])
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<StudioMember['role']>('operator')
+  const [permissions, setPermissions] = useState<Record<string, boolean>>({ dashboard: true, blocks: true, games: true })
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const canManage = currentMember?.role === 'developer' || currentMember?.role === 'admin'
+  const canManage = currentMember?.role === 'developer'
   useEffect(() => { let active = true; void loadStudioMembers().then(remote => { if (active && remote.length) setMembers(remote) }).catch(() => { /* The initial allowlist remains visible before migration. */ }); return () => { active = false } }, [])
   useEffect(() => { if (!members.length) setMembers(ALLOWED_EMAILS.map((memberEmail) => ({ email: memberEmail, role: 'developer', active: true, permissions: {} }))) }, [members.length])
   const save = async () => {
     const normalized = email.trim().toLowerCase()
     if (!normalized.includes('@')) { setError('Escribe un correo válido.'); return }
     setBusy(true); setError('')
-    const member: StudioMember = { email: normalized, role, active: true, permissions: role === 'operator' ? { dashboard: true, blocks: true, games: true } : {} }
+    const member: StudioMember = { email: normalized, role, active: true, permissions: role === 'operator' ? permissions : {} }
     try { await saveStudioMember(member); setMembers(current => current.some(item => item.email === normalized) ? current.map(item => item.email === normalized ? member : item) : [...current, member]); appendAudit('ALTA_USUARIO', `${normalized} agregado como ${role}`); setOpen(false); setEmail('') } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo guardar el usuario. Ejecuta la migración de Supabase primero.') } finally { setBusy(false) }
   }
-  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">Los desarrolladores controlan administradores y operadores con permisos separados.</p></div><button className="primary" disabled={!canManage} onClick={() => { setError(''); setOpen(true) }}><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las dos cuentas iniciales tienen rol desarrollador.</p></div><span className="preview-tag">{members.length} CUENTAS</span></div><div className="user-list">{members.map(member => <UserRow key={member.email} member={member} />)}</div></section>{open && <div className="modal-backdrop"><section className="modal small-modal"><header><div><span className="eyebrow">NUEVO ACCESO</span><h2>Agregar usuario</h2></div><button className="icon-button" onClick={() => setOpen(false)} type="button">×</button></header><div className="form-stack"><label>Correo<input autoFocus type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="operador@dominio.com" /></label><label>Rol<select value={role} onChange={event => setRole(event.target.value as StudioMember['role'])}><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>{error && <div className="error-box">{error}</div>}</div><footer><button className="ghost" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()} type="button">{busy ? 'Guardando…' : 'Guardar acceso'}</button></footer></section></div>}</div>
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">Los desarrolladores controlan administradores y operadores con permisos separados.</p></div><button className="primary" disabled={!canManage} onClick={() => { setError(''); setPermissions({ dashboard: true, blocks: true, games: true }); setOpen(true) }}><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las dos cuentas iniciales tienen rol desarrollador.</p></div><span className="preview-tag">{members.length} CUENTAS</span></div><div className="user-list">{members.map(member => <UserRow key={member.email} member={member} />)}</div></section>{open && <div className="modal-backdrop"><section className="modal small-modal"><header><div><span className="eyebrow">NUEVO ACCESO</span><h2>Agregar usuario</h2></div><button className="icon-button" onClick={() => setOpen(false)} type="button">×</button></header><div className="form-stack"><label>Correo<input autoFocus type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="operador@dominio.com" /></label><label>Rol<select value={role} onChange={event => setRole(event.target.value as StudioMember['role'])}><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>{role === 'operator' && <div className="permission-picker"><span className="eyebrow">MÓDULOS PERMITIDOS</span>{permissionOptions.map(option => <label key={option.id}><input type="checkbox" checked={permissions[option.id] === true} onChange={event => setPermissions(current => ({ ...current, [option.id]: event.target.checked }))} />{option.label}</label>)}</div>}{error && <div className="error-box">{error}</div>}</div><footer><button className="ghost" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()} type="button">{busy ? 'Guardando…' : 'Guardar acceso'}</button></footer></section></div>}</div>
 }
 function UserRow({ member }: { member: StudioMember }) { return <div className="user-row"><div className="avatar">{member.email.slice(0, 2).toUpperCase()}</div><div><b>{member.email}</b><span>{member.role === 'developer' ? 'Desarrollador' : member.role === 'admin' ? 'Administrador' : 'Operador'}</span></div><span className={`status ${member.active ? 'listo' : 'entregado'}`}>{member.active ? 'Activo' : 'Inactivo'}</span><button className="icon-button" disabled title="Los cambios se administran desde la siguiente versión de permisos">⋯</button></div> }
 
@@ -437,6 +456,10 @@ function App() {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    if (currentMember && !canAccessView(currentMember, view)) setView('dashboard')
+  }, [currentMember, view])
+
   if (!authReady) return <main className="login-shell"><section className="login-card"><Logo /><p className="muted">Verificando la sesión segura…</p></section></main>
   if (!email) return <Login onLogin={async (value) => { const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
 
@@ -446,7 +469,7 @@ function App() {
   const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
   const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false); if (updated) void syncStudioBlock(updated).catch(() => { /* Offline delivery remains local. */ }); return next }) }
   const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users currentMember={currentMember} />, audit: <Audit /> }[view]
-  return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
+  return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} member={currentMember} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
