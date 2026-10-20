@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
+import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, cardSignature, createBlockPdf, createBlocksZip, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
 import { loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
 import './styles.css'
@@ -22,9 +22,22 @@ const permissionOptions: Array<{ id: View; label: string }> = [
 ]
 
 const BLOCK_DB_NAME = 'bingo-promax-studio'
-const BLOCK_DB_VERSION = 1
-const BLOCK_STORE_NAME = 'snapshots'
+const BLOCK_DB_VERSION = 2
+const SNAPSHOT_STORE_NAME = 'snapshots'
+const BLOCK_STORE_NAME = 'blocks'
+const GENERATION_STORE_NAME = 'generationJobs'
 const MAX_BULK_ZIP_SHEETS = 2000
+const GENERATION_CHUNK_SHEETS = 400
+
+type GenerationCheckpoint = {
+  id: 'active'
+  campaign: string
+  totalSheets: number
+  completedSheets: number
+  nextPage: number
+  nextBlockNumber: number
+  updatedAt: string
+}
 
 function openBlockDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -34,7 +47,9 @@ function openBlockDatabase(): Promise<IDBDatabase> {
     }
     const request = window.indexedDB.open(BLOCK_DB_NAME, BLOCK_DB_VERSION)
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(BLOCK_STORE_NAME)) request.result.createObjectStore(BLOCK_STORE_NAME, { keyPath: 'id' })
+      if (!request.result.objectStoreNames.contains(SNAPSHOT_STORE_NAME)) request.result.createObjectStore(SNAPSHOT_STORE_NAME, { keyPath: 'id' })
+      if (!request.result.objectStoreNames.contains(BLOCK_STORE_NAME)) request.result.createObjectStore(BLOCK_STORE_NAME, { keyPath: 'code' })
+      if (!request.result.objectStoreNames.contains(GENERATION_STORE_NAME)) request.result.createObjectStore(GENERATION_STORE_NAME, { keyPath: 'id' })
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('No se pudo abrir el almacenamiento local.'))
@@ -50,8 +65,11 @@ async function persistBlocks(blocks: BingoBlock[], syncRemote = true) {
   try {
     const database = await openBlockDatabase()
     await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(BLOCK_STORE_NAME, 'readwrite')
-      transaction.objectStore(BLOCK_STORE_NAME).put({ id: 'current', blocks, savedAt: new Date().toISOString() })
+      const transaction = database.transaction([SNAPSHOT_STORE_NAME, BLOCK_STORE_NAME], 'readwrite')
+      const blockStore = transaction.objectStore(BLOCK_STORE_NAME)
+      blockStore.clear()
+      blocks.forEach((block) => blockStore.put(block))
+      transaction.objectStore(SNAPSHOT_STORE_NAME).put({ id: 'current', blocks, savedAt: new Date().toISOString() })
       transaction.oncomplete = () => { database.close(); resolve() }
       transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el inventario.')) }
     })
@@ -61,21 +79,80 @@ async function persistBlocks(blocks: BingoBlock[], syncRemote = true) {
   }
 }
 
-async function loadPersistedBlocks(): Promise<BingoBlock[]> {
+async function persistGenerationChunk(blocks: BingoBlock[]) {
+  if (!blocks.length) return
+  const database = await openBlockDatabase()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(BLOCK_STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(BLOCK_STORE_NAME)
+    blocks.forEach((block) => store.put(block))
+    transaction.oncomplete = () => { database.close(); resolve() }
+    transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el fragmento generado.')) }
+  })
+}
+
+async function saveGenerationCheckpoint(checkpoint: GenerationCheckpoint) {
+  const database = await openBlockDatabase()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
+    transaction.objectStore(GENERATION_STORE_NAME).put(checkpoint)
+    transaction.oncomplete = () => { database.close(); resolve() }
+    transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el checkpoint.')) }
+  })
+}
+
+async function loadGenerationCheckpoint(): Promise<GenerationCheckpoint | null> {
   try {
-    const remote = await loadStudioBlocks()
-    if (remote.length) return remote
+    const database = await openBlockDatabase()
+    const checkpoint = await new Promise<GenerationCheckpoint | undefined>((resolve, reject) => {
+      const request = database.transaction(GENERATION_STORE_NAME, 'readonly').objectStore(GENERATION_STORE_NAME).get('active')
+      request.onsuccess = () => resolve(request.result as GenerationCheckpoint | undefined)
+      request.onerror = () => reject(request.error)
+    })
+    database.close()
+    return checkpoint ?? null
+  } catch { return null }
+}
+
+async function clearGenerationCheckpoint() {
+  try {
+    const database = await openBlockDatabase()
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
+      transaction.objectStore(GENERATION_STORE_NAME).delete('active')
+      transaction.oncomplete = () => { database.close(); resolve() }
+      transaction.onerror = () => { database.close(); reject(transaction.error) }
+    })
+  } catch { /* A completed generation remains usable even if cleanup is unavailable. */ }
+}
+
+async function loadPersistedBlocks(): Promise<BingoBlock[]> {
+  let remoteBlocks: BingoBlock[] = []
+  try {
+    remoteBlocks = await loadStudioBlocks()
   } catch { /* The migration may not be installed yet; use local persistence. */ }
   try {
     const database = await openBlockDatabase()
+    const storedBlocks = await new Promise<BingoBlock[]>((resolve, reject) => {
+      const request = database.transaction(BLOCK_STORE_NAME, 'readonly').objectStore(BLOCK_STORE_NAME).getAll()
+      request.onsuccess = () => resolve((request.result as BingoBlock[] | undefined) ?? [])
+      request.onerror = () => reject(request.error)
+    })
+    if (storedBlocks.length) {
+      database.close()
+      const merged = new Map(remoteBlocks.map((block) => [block.code, block]))
+      storedBlocks.forEach((block) => merged.set(block.code, block))
+      return [...merged.values()]
+    }
     const snapshot = await new Promise<{ blocks?: BingoBlock[] } | undefined>((resolve, reject) => {
-      const request = database.transaction(BLOCK_STORE_NAME, 'readonly').objectStore(BLOCK_STORE_NAME).get('current')
+      const request = database.transaction(SNAPSHOT_STORE_NAME, 'readonly').objectStore(SNAPSHOT_STORE_NAME).get('current')
       request.onsuccess = () => resolve(request.result as { blocks?: BingoBlock[] } | undefined)
       request.onerror = () => reject(request.error)
     })
     database.close()
-    if (Array.isArray(snapshot?.blocks)) return snapshot.blocks
+    if (Array.isArray(snapshot?.blocks) && snapshot.blocks.length) return snapshot.blocks
   } catch { /* Fall back to the fast localStorage path. */ }
+  if (remoteBlocks.length) return remoteBlocks
   try {
     const stored = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]')
     return Array.isArray(stored) ? stored as BingoBlock[] : []
@@ -226,24 +303,61 @@ function Dashboard({ setView, blocks }: { setView: (view: View) => void; blocks:
 function Activity({ icon, color, title, description, time }: { icon: string; color: string; title: string; description: string; time: string }) { return <div className="activity-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{description}</span></div><time>{time}</time></div> }
 function QuickAction({ icon, title, text, onClick }: { icon: string; title: string; text: string; onClick: () => void }) { return <button className="quick-action" onClick={onClick}><div className="quick-icon"><Icon name={icon} /></div><div><b>{title}</b><span>{text}</span></div><Icon name="arrow" /></button> }
 
-function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[]) => void; setView: (view: View) => void }) {
+type GenerationUpdate = 'checkpoint' | 'complete'
+
+function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[], update?: GenerationUpdate) => void; setView: (view: View) => void }) {
   const [sheets, setSheets] = useState(100)
   const [code, setCode] = useState('BP-2026')
   const [progress, setProgress] = useState(0)
   const [done, setDone] = useState(false)
   const [generated, setGenerated] = useState<BingoBlock[]>([])
   const [error, setError] = useState('')
-  const generate = () => {
-    setError(''); setDone(false); setProgress(1)
+  const [resumeJob, setResumeJob] = useState<GenerationCheckpoint | null>(null)
+  useEffect(() => { void loadGenerationCheckpoint().then(setResumeJob) }, [])
+
+  const runGeneration = async (job: GenerationCheckpoint, usedSignatures: string[] = []) => {
+    setError(''); setDone(false); setProgress(Math.max(1, Math.round((job.completedSheets / job.totalSheets) * 100)))
+    try { await saveGenerationCheckpoint(job) } catch { /* The worker can still finish in memory. */ }
     const worker = new Worker(new URL('./generator.worker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (event: MessageEvent<{ type: 'progress'; percent: number } | { type: 'complete'; blocks: BingoBlock[] } | { type: 'error'; message: string }>) => {
+    let checkpointChain = Promise.resolve()
+    const finishWithError = (message: string) => { setProgress(0); setError(message); setResumeJob(job); worker.terminate() }
+    worker.onmessage = (event: MessageEvent<{ type: 'progress'; percent: number } | { type: 'chunk'; blocks: BingoBlock[]; completedSheets: number; nextPage: number; nextBlockNumber: number } | { type: 'complete'; completedSheets: number } | { type: 'error'; message: string }>) => {
       const result = event.data
       if (result.type === 'progress') setProgress(Math.max(1, result.percent))
-      if (result.type === 'complete') { setGenerated(result.blocks); onGenerated(result.blocks); setProgress(100); setDone(true); worker.terminate() }
-      if (result.type === 'error') { setProgress(0); setError(result.message); worker.terminate() }
+      if (result.type === 'chunk') {
+        setGenerated((current) => [...current, ...result.blocks])
+        onGenerated(result.blocks, 'checkpoint')
+        checkpointChain = checkpointChain.then(async () => {
+          await persistGenerationChunk(result.blocks)
+          await saveGenerationCheckpoint({ ...job, completedSheets: result.completedSheets, nextPage: result.nextPage, nextBlockNumber: result.nextBlockNumber, updatedAt: new Date().toISOString() })
+        }).catch((checkpointError) => { finishWithError(checkpointError instanceof Error ? checkpointError.message : 'No se pudo guardar el progreso de generación.') })
+      }
+      if (result.type === 'complete') {
+        void checkpointChain.then(async () => {
+          await clearGenerationCheckpoint()
+          onGenerated([], 'complete')
+          setProgress(100); setDone(true); setResumeJob(null); worker.terminate()
+        }).catch((completionError) => finishWithError(completionError instanceof Error ? completionError.message : 'No se pudo finalizar la generación.'))
+      }
+      if (result.type === 'error') finishWithError(result.message)
     }
-    worker.onerror = () => { setProgress(0); setError('No se pudo iniciar el generador en segundo plano.'); worker.terminate() }
-    worker.postMessage({ campaign: code, totalSheets: sheets })
+    worker.onerror = () => finishWithError('No se pudo continuar el generador en segundo plano. El progreso guardado se puede reanudar.')
+    worker.postMessage({ campaign: job.campaign, totalSheets: job.totalSheets - job.completedSheets, startingPage: job.nextPage, startingBlockNumber: job.nextBlockNumber, chunkSheets: GENERATION_CHUNK_SHEETS, usedSignatures })
+  }
+
+  const normalizeCampaign = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '-') || 'BPS-2026'
+  const generate = () => {
+    if (resumeJob) { void resumeGeneration(); return }
+    const campaign = normalizeCampaign(code)
+    const job: GenerationCheckpoint = { id: 'active', campaign, totalSheets: sheets, completedSheets: 0, nextPage: 1, nextBlockNumber: 1, updatedAt: new Date().toISOString() }
+    setGenerated([]); setResumeJob(null); void runGeneration(job)
+  }
+  const resumeGeneration = async () => {
+    if (!resumeJob) return
+    const stored = await loadPersistedBlocks()
+    const existing = stored.filter((block) => block.campaign === resumeJob.campaign)
+    const usedSignatures = Array.from(new Set(existing.flatMap((block) => block.sheets.flatMap((sheet) => sheet.cards.map((card) => cardSignature(card.numbers))))))
+    setCode(resumeJob.campaign); setSheets(resumeJob.totalSheets); setGenerated(existing); void runGeneration(resumeJob, usedSignatures)
   }
   const downloadZip = async () => { if (!generated.length) return; const totalSheets = generated.reduce((total, block) => total + block.pages, 0); if (totalSheets > MAX_BULK_ZIP_SHEETS) { setError(`Este lote tiene ${totalSheets.toLocaleString('es-EC')} hojas. Descarga los bloques individualmente desde Inventario para evitar un archivo ZIP demasiado grande.`); return } const blob = await createBlocksZip(generated); triggerDownload(blob, `${code.toUpperCase()}-bloques.zip`) }
   return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">NUEVA GENERACIÓN</div><h1>Diseña tu próximo lote.</h1><p className="muted">Cada hoja tendrá cuatro cartones únicos de 5×5 con centro libre.</p></div><div className="secure-badge"><Icon name="check" /> Motor real de cartones activos</div></div><div className="generator-layout"><section className="panel form-panel"><div className="panel-heading"><div><h3>Configuración del lote</h3><p>Define cómo se identificará y distribuirá.</p></div><span className="step-badge">01 / 02</span></div><label>Nombre del lote<input value={code} onChange={e => setCode(e.target.value)} /></label><label>Cantidad de hojas<div className="number-control"><button onClick={() => setSheets(Math.max(100, sheets - 100))}>−</button><input type="number" min="100" max="200000" value={sheets} onChange={e => setSheets(Math.min(200000, Math.max(100, Number(e.target.value))))} /><button onClick={() => setSheets(Math.min(200000, sheets + 100))}>+</button></div><small className="helper">Mínimo 100 · máximo 200.000 · se crearán {sheets.toLocaleString('es-EC')} hojas / {(sheets * 4).toLocaleString('es-EC')} cartones</small></label><div className="two-fields"><label>Hojas por bloque<input value="40 hojas" disabled /></label><label>Formato<input value="5 × 5 · 75 bolillas" disabled /></label></div><div className="option-row"><div className="toggle active"><span /></div><div><b>Evitar cartones duplicados</b><small>Validación activa durante la generación</small></div></div><div className="option-row"><div className="toggle active"><span /></div><div><b>Crear archivos por bloque</b><small>PDF, ZIP y manifiesto CSV/JSON</small></div></div>{error && <div className="error-box">{error}</div>}<button className="primary wide" onClick={generate} disabled={progress > 0 && progress < 100}>{progress > 0 && progress < 100 ? 'Generando cartones…' : done ? 'Generación completada' : 'Generar lote real'} <Icon name={done ? 'check' : 'arrow'} /></button>{done && <div className="download-actions"><button className="ghost" onClick={downloadZip}><Icon name="download" /> {generated.reduce((total, block) => total + block.pages, 0) > MAX_BULK_ZIP_SHEETS ? 'Descargar por bloques' : 'Descargar ZIP'}</button><button className="ghost" onClick={() => triggerDownload(new Blob([blocksToJson(generated)], { type: 'application/json' }), `${code.toUpperCase()}-manifest.json`)}>JSON</button></div>}</section><section className="panel preview-panel"><div className="panel-heading"><div><h3>Vista previa</h3><p>Así se verá una hoja de distribución.</p></div><span className="preview-tag">PDF / ZIP</span></div><div className="sheet-preview"><div className="sheet-head"><b>{code.toUpperCase()}-H000001</b><span>BLOQUE {code.toUpperCase()}-001</span></div><div className="mini-cards">{[0,1,2,3].map(i => <MiniCard key={i} offset={i * 3} />)}</div><div className="sheet-foot"><span>4 cartones · centro libre</span><span>Hoja 1 de {sheets.toLocaleString('es-EC')}</span></div></div>{progress > 0 && <div className="progress-box"><div><b>{progress === 100 ? 'Lote listo para descargar' : 'Generando hojas…'}</b><span>{progress}% completado</span></div><div className="progress-track"><div style={{ width: `${progress}%` }} /></div></div>}<div className="generation-note"><Icon name="lock" /><span>La generación se ejecuta en un trabajador independiente para mantener la interfaz disponible. Los lotes grandes se descargan por bloque para proteger la memoria del navegador.</span></div></section></div><div className="next-step"><span><Icon name="check" /> {done ? `${generated.length} bloques creados correctamente` : 'Generación lista para ejecutar'}</span><button className="text-button" onClick={() => setView('blocks')}>Ver mis bloques <Icon name="arrow" /></button></div></div>
@@ -482,7 +596,7 @@ function App() {
   if (!email) return <Login onLogin={async (value) => { const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
 
   const logout = async () => { await supabase.auth.signOut(); localStorage.removeItem('bps-email'); setEmail(null) }
-  const onGenerated = (nextBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
+  const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); if (update === 'complete') void persistBlocks(merged); return merged }) }
   const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
   const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false); if (updated) void syncStudioBlock(updated).catch(() => { /* Offline delivery remains local. */ }); return next }) }
   const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users currentMember={currentMember} />, audit: <Audit /> }[view]

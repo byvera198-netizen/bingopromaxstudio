@@ -41,7 +41,7 @@ function shuffle<T>(items: T[], random: () => number): T[] {
   return result
 }
 
-function cardSignature(numbers: number[][]): string {
+export function cardSignature(numbers: number[][]): string {
   return numbers.flat().join('-')
 }
 
@@ -54,17 +54,16 @@ function createCard(id: string, random: () => number): BingoCard {
   return { id, numbers }
 }
 
-export function generateBatch(campaign: string, totalSheets: number, startingPage = 1, onProgress?: (percent: number) => void): BingoBlock[] {
-  if (!Number.isInteger(totalSheets) || totalSheets < 100 || totalSheets > MAX_SHEETS) throw new Error(`La cantidad debe estar entre 100 y ${MAX_SHEETS.toLocaleString('es-EC')} hojas.`)
+export function generateBatchChunk(campaign: string, totalSheets: number, startingPage = 1, startingBlockNumber = 1, usedCards = new Set<string>(), onProgress?: (percent: number) => void): BingoBlock[] {
+  if (!Number.isInteger(totalSheets) || totalSheets < 1 || totalSheets > MAX_SHEETS) throw new Error(`El fragmento debe contener entre 1 y ${MAX_SHEETS.toLocaleString('es-EC')} hojas.`)
   const random = Math.random
   const blocks: BingoBlock[] = []
-  const usedCards = new Set<string>()
   const batchCode = campaign.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '-') || 'BPS-2026'
   let page = startingPage
   for (let offset = 0; offset < totalSheets; offset += SHEETS_PER_BLOCK) {
     const blockSheets: BingoSheet[] = []
     const pageCount = Math.min(SHEETS_PER_BLOCK, totalSheets - offset)
-    const blockNumber = Math.floor(offset / SHEETS_PER_BLOCK) + 1
+    const blockNumber = startingBlockNumber + Math.floor(offset / SHEETS_PER_BLOCK)
     const blockCode = `${batchCode}-${String(blockNumber).padStart(3, '0')}`
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
       const pageNumber = page
@@ -89,6 +88,11 @@ export function generateBatch(campaign: string, totalSheets: number, startingPag
   }
   onProgress?.(100)
   return blocks
+}
+
+export function generateBatch(campaign: string, totalSheets: number, startingPage = 1, onProgress?: (percent: number) => void): BingoBlock[] {
+  if (!Number.isInteger(totalSheets) || totalSheets < 100 || totalSheets > MAX_SHEETS) throw new Error(`La cantidad debe estar entre 100 y ${MAX_SHEETS.toLocaleString('es-EC')} hojas.`)
+  return generateBatchChunk(campaign, totalSheets, startingPage, 1, new Set<string>(), onProgress)
 }
 
 function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: number, height: number) {

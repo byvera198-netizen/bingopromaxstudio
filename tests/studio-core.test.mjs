@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import JSZip from 'jszip'
 import {
+  cardSignature,
   blocksToProMaxCsv,
   createBlockPdf,
   createBlocksZip,
   createProMaxPackage,
   generateBatch,
+  generateBatchChunk,
   isPatternComplete,
   parseProMaxPackage,
   MAX_SHEETS,
@@ -64,6 +66,20 @@ test('genera 1.000 hojas y mantiene la numeración continua', () => {
   assert.equal(sheets.at(-1).pageNumber, 1000)
   assert.equal(sheets.every((sheet, index) => sheet.pageNumber === index + 1), true)
   assert.equal(new Set(allCards(blocks).map((card) => card.id)).size, 4000)
+})
+
+test('permite continuar por fragmentos sin reiniciar hojas ni bloques', () => {
+  const usedSignatures = new Set()
+  const first = generateBatchChunk('qa-resume', 40, 1, 1, usedSignatures)
+  const second = generateBatchChunk('qa-resume', 60, 41, 2, usedSignatures)
+  const blocks = [...first, ...second]
+  const cards = allCards(blocks)
+
+  assert.deepEqual(blocks.map((block) => block.code), ['QA-RESUME-001', 'QA-RESUME-002', 'QA-RESUME-003'])
+  assert.deepEqual(blocks.map((block) => block.pages), [40, 40, 20])
+  assert.equal(allSheets(blocks)[0].pageNumber, 1)
+  assert.equal(allSheets(blocks).at(-1).pageNumber, 100)
+  assert.equal(new Set(cards.map((card) => cardSignature(card.numbers))).size, cards.length)
 })
 
 test('rechaza cantidades fuera del rango operativo', () => {
