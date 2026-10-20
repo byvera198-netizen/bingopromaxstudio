@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
+import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -50,6 +50,7 @@ const specialMasks = [maskFor('11111','10001','10001','10001','11111'), maskFor(
 const extraPatterns: Pattern[] = extraNames.slice(0, 56).map((name, index) => { const key = name.replace('Letra ', '').replace('Número ', ''); const cells = name.startsWith('Letra ') ? (letterMasks[key] ?? maskFor('11111','00100','00100','00100','11111')) : name.startsWith('Número ') ? (numberMasks[key] ?? specialMasks[index % specialMasks.length]) : specialMasks[index % specialMasks.length]; const group = name.startsWith('Letra ') ? 'Letras' : name.startsWith('Número ') ? 'Números' : 'Especiales'; return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, description: `Figura ${name.toLowerCase()} para jugar en una partida.`, group, color: ['#b9ed2c','#6ee7d1','#bda1ff','#ff9e5c','#ef7898'][index % 5], cells, active: false } })
 const patternCatalog: Pattern[] = [...seedPatterns, ...extraPatterns]
 function readPatternCatalog(): Pattern[] { try { const saved: Pattern[] = JSON.parse(localStorage.getItem('bps-patterns') ?? '[]'); return patternCatalog.map(pattern => saved.find(item => item.id === pattern.id) ?? pattern).concat(saved.filter(item => !patternCatalog.some(pattern => pattern.id === item.id))) } catch { return patternCatalog } }
+function blocksToProMaxJson(blocks: BingoBlock[]) { return blocksToProMaxJsonBase(blocks, readPatternCatalog().map(pattern => ({ id: pattern.id, name: pattern.name, description: pattern.description, group: pattern.group, color: pattern.color, cells: pattern.cells, active: pattern.active }))) }
 
 const sampleCard = [
   [4, 18, 31, 47, 69],

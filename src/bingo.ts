@@ -193,6 +193,16 @@ export type ProMaxCard = {
   status: 'active'
 }
 
+export type ProMaxPattern = {
+  id: string
+  name: string
+  description: string
+  group: string
+  color: string
+  cells: number[]
+  active: boolean
+}
+
 export type ProMaxPackage = {
   schemaVersion: '1.1'
   source: 'bingo-promax-studio'
@@ -201,10 +211,11 @@ export type ProMaxPackage = {
   game: { id: string; name: string; date: string; prize: string; status: 'ready'; notes: string; activePatternId: string; activePatternName: string; activePatternCells: number[]; autoPause: boolean }
   blocks: BingoBlock[]
   cards: ProMaxCard[]
+  patterns: ProMaxPattern[]
   campaigns: Array<{ code: string; blockCodes: string[] }>
 }
 
-export function createProMaxPackage(blocks: BingoBlock[]): ProMaxPackage {
+export function createProMaxPackage(blocks: BingoBlock[], patterns: ProMaxPattern[] = []): ProMaxPackage {
   const campaigns = new Map<string, BingoBlock[]>()
   blocks.forEach(block => campaigns.set(block.campaign, [...(campaigns.get(block.campaign) ?? []), block]))
   const campaignCode = blocks[0]?.campaign ?? 'BPS-2026'
@@ -219,11 +230,11 @@ export function createProMaxPackage(blocks: BingoBlock[]): ProMaxPackage {
     sourcePage: sheet.pageNumber,
     status: 'active' as const,
   }))))
-  return { schemaVersion: '1.1', source: 'bingo-promax-studio', target: 'bingo-control-pro', generatedAt: new Date().toISOString(), game: { id: campaignCode, name: `Importación ${campaignCode}`, date: new Date().toISOString().slice(0, 10), prize: '', status: 'ready', notes: 'Partida preparada desde Bingo ProMax Studio.', activePatternId: 'linea-horizontal', activePatternName: 'Línea horizontal', activePatternCells: [10, 11, 12, 13, 14], autoPause: true }, blocks, cards, campaigns: [...campaigns.entries()].map(([code, campaignBlocks]) => ({ code, blockCodes: campaignBlocks.map(block => block.code) })) }
+  return { schemaVersion: '1.1', source: 'bingo-promax-studio', target: 'bingo-control-pro', generatedAt: new Date().toISOString(), game: { id: campaignCode, name: `Importación ${campaignCode}`, date: new Date().toISOString().slice(0, 10), prize: '', status: 'ready', notes: 'Partida preparada desde Bingo ProMax Studio.', activePatternId: 'linea-horizontal', activePatternName: 'Línea horizontal', activePatternCells: [10, 11, 12, 13, 14], autoPause: true }, blocks, cards, patterns, campaigns: [...campaigns.entries()].map(([code, campaignBlocks]) => ({ code, blockCodes: campaignBlocks.map(block => block.code) })) }
 }
 
-export function blocksToProMaxJson(blocks: BingoBlock[]) {
-  return JSON.stringify(createProMaxPackage(blocks), null, 2)
+export function blocksToProMaxJson(blocks: BingoBlock[], patterns: ProMaxPattern[] = []) {
+  return JSON.stringify(createProMaxPackage(blocks, patterns), null, 2)
 }
 
 export function blocksToProMaxCsv(blocks: BingoBlock[]) {
