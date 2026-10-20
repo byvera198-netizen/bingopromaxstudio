@@ -29,6 +29,7 @@ Finalmente ejecuta la migración de operación multiadministrador:
 ```text
 supabase/003_multi_tenant_distribution.sql
 supabase/004_sales_clients.sql
+supabase/005_studio_controls_and_uniqueness.sql
 ```
 
 Estas migraciones crean un espacio aislado por administrador, cuentas de
@@ -40,6 +41,12 @@ La migración crea inventario de bloques, partidas, patrones, auditoría, miembr
 
 - `byvera198@gmail.com`
 - `bveraalvear@gmail.com`
+
+La migración 005 deja preconfigurados `byvera980@gmail.com` como administrador y
+`moavxy@gmail.com` como vendedor. También crea los controles para editar o
+desactivar administradores, distribuidores y vendedores, encabezados propios,
+marcas de agua por vendedor, selección de bloques por partida y una huella única
+por cartón para impedir duplicados dentro de cada espacio administrativo.
 
 En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL de Studio a `Redirect URLs`:
 

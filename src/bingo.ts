@@ -31,6 +31,7 @@ export type BingoBlock = {
   holderType?: 'admin' | 'distributor' | 'seller'
   holderId?: string
   holderName?: string
+  watermark?: { text: string; opacity: number; position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }
 }
 
 const columnRanges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]] as const
@@ -75,7 +76,8 @@ export function generateBatchChunk(campaign: string, totalSheets: number, starti
         let card = createCard(`${blockCode}-H${String(pageNumber).padStart(6, '0')}-C${cardIndex + 1}`, random)
         let signature = cardSignature(card.numbers)
         let attempts = 0
-        while (usedCards.has(signature) && attempts < 12) {
+        while (usedCards.has(signature)) {
+          if (attempts >= 1000) throw new Error('No fue posible obtener un cartón único. La generación se detuvo para proteger el inventario.')
           card = createCard(card.id, random)
           signature = cardSignature(card.numbers)
           attempts += 1
@@ -128,7 +130,7 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
   doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center' })
 }
 
-export function createBlockPdf(block: BingoBlock): ArrayBuffer {
+export function createBlockPdf(block: BingoBlock, watermark = block.watermark): ArrayBuffer {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
   block.sheets.forEach((sheet, index) => {
     if (index > 0) doc.addPage()
@@ -147,6 +149,15 @@ export function createBlockPdf(block: BingoBlock): ArrayBuffer {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.text('Cartones de bingo · 5 × 5 · centro libre · 75 bolillas', 14, 30)
+    if (watermark?.text) {
+      const shade = Math.max(150, Math.min(235, Math.round(235 - watermark.opacity * 180)))
+      doc.setTextColor(shade, shade, shade)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      const coordinates = { 'top-left': [25, 35], 'top-right': [185, 35], 'bottom-left': [25, 270], 'bottom-right': [185, 270] } as const
+      const [x, y] = coordinates[watermark.position]
+      doc.text(watermark.text, x, y, { align: watermark.position.endsWith('right') ? 'right' : 'left', angle: -18 })
+    }
     const positions = [[14, 39], [108, 39], [14, 139], [108, 139]] as const
     sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 88, 82))
     doc.setDrawColor(220, 218, 207)

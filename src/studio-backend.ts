@@ -25,6 +25,8 @@ export type StudioParty = { id: string; type: 'distributor' | 'seller'; name: st
 export type StudioTransfer = { id: string; blockCode: string; fromType: string; fromName: string; toType: string; toName: string; notes: string; transferredBy: string; createdAt: string }
 export type StudioClient = { id: string; name: string; email: string; phone: string }
 export type StudioSale = { id: string; blockCode: string; sellerType: 'distributor' | 'seller'; sellerId: string; clientName: string; sheetsSold: number; cardsSold: number; amount: number; notes: string; soldAt: string }
+export type StudioHeader = { id: string; name: string; content: string; active: boolean }
+export type StudioWatermark = { id: string; distributorId: string; sellerId?: string; name: string; text: string; opacity: number; position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; active: boolean }
 
 export type StudioGame = {
   id: string
@@ -36,6 +38,11 @@ export type StudioGame = {
   drawnNumbers: number[]
   winnerHistory: Array<{ pattern: string; count: number; ball: number }>
   notes: string
+  activeBlockCodes: string[]
+  prizePlan: Array<{ name: string; amount: string }>
+  headerId?: string
+  headerText?: string
+  watermarkId?: string
 }
 
 export type StudioPattern = {
@@ -46,6 +53,7 @@ export type StudioPattern = {
   color: string
   cells: number[]
   active: boolean
+  tenantId?: string
 }
 
 export type StudioMember = {
@@ -273,23 +281,33 @@ function mapGame(row: Record<string, unknown>): StudioGame {
       return pattern && Number.isInteger(count) && count >= 0 && Number.isInteger(ball) && ball >= 1 && ball <= 75 ? [{ pattern, count, ball }] : []
     }),
     notes: String(row.notes ?? ''),
+    activeBlockCodes: Array.isArray(row.active_block_codes) ? row.active_block_codes.filter((value): value is string => typeof value === 'string') : [],
+    prizePlan: Array.isArray(row.prize_plan) ? row.prize_plan.flatMap((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+      const item = value as Record<string, unknown>
+      return [{ name: String(item.name ?? ''), amount: String(item.amount ?? '') }]
+    }) : [],
+    headerId: typeof row.header_id === 'string' ? row.header_id : undefined,
+    headerText: typeof row.header_text === 'string' ? row.header_text : undefined,
+    watermarkId: typeof row.watermark_id === 'string' ? row.watermark_id : undefined,
   }
 }
 
-export async function loadStudioGame(): Promise<StudioGame | null> {
+export async function loadStudioGame(tenantId?: string | null): Promise<StudioGame | null> {
   const userId = await currentUserId()
   if (!userId) return null
-  const { data, error } = await supabase
+  let query = supabase
     .from('studio_games')
-    .select('id,name,game_date,prize,status,active_pattern_ids,drawn_numbers,winner_history,notes')
+    .select('id,name,game_date,prize,status,active_pattern_ids,drawn_numbers,winner_history,notes,active_block_codes,prize_plan,header_id,header_text,watermark_id')
     .order('updated_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { data, error } = await query.maybeSingle()
   if (error) throw error
   return data ? mapGame(data as Record<string, unknown>) : null
 }
 
-export async function syncStudioGame(game: StudioGame) {
+export async function syncStudioGame(game: StudioGame, tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId) return
   const result = await supabase.from('studio_games').upsert({
@@ -302,7 +320,13 @@ export async function syncStudioGame(game: StudioGame) {
     drawn_numbers: game.drawnNumbers,
     winner_history: game.winnerHistory,
     notes: game.notes,
+    active_block_codes: game.activeBlockCodes,
+    prize_plan: game.prizePlan,
+    header_id: game.headerId ?? null,
+    header_text: game.headerText ?? '',
+    watermark_id: game.watermarkId ?? null,
     created_by: userId,
+    tenant_id: tenantId ?? undefined,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'id' })
   if (result.error) throw result.error
@@ -321,21 +345,24 @@ function mapPattern(row: Record<string, unknown>): StudioPattern | null {
     color: String(row.color ?? '#f5c84b'),
     cells: Array.from(new Set(cells)),
     active: row.active === true,
+    tenantId: typeof row.tenant_id === 'string' ? row.tenant_id : undefined,
   }
 }
 
-export async function loadStudioPatterns(): Promise<StudioPattern[]> {
+export async function loadStudioPatterns(tenantId?: string | null): Promise<StudioPattern[]> {
   const userId = await currentUserId()
   if (!userId) return []
-  const { data, error } = await supabase
+  let query = supabase
     .from('studio_patterns')
-    .select('id,name,description,pattern_group,color,cells,active')
+    .select('id,name,description,pattern_group,color,cells,active,tenant_id')
     .order('created_at', { ascending: true })
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { data, error } = await query
   if (error) throw error
   return (data as Array<Record<string, unknown>> | null ?? []).map(mapPattern).filter((pattern): pattern is StudioPattern => Boolean(pattern))
 }
 
-export async function syncStudioPatterns(patterns: StudioPattern[]) {
+export async function syncStudioPatterns(patterns: StudioPattern[], tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId || !patterns.length) return
   const rows = patterns.map((pattern) => ({
@@ -348,6 +375,7 @@ export async function syncStudioPatterns(patterns: StudioPattern[]) {
     active: pattern.active,
     created_by: userId,
     updated_at: new Date().toISOString(),
+    tenant_id: tenantId ?? undefined,
   }))
   for (let offset = 0; offset < rows.length; offset += SYNC_CHUNK_SIZE) {
     const result = await supabase.from('studio_patterns').upsert(rows.slice(offset, offset + SYNC_CHUNK_SIZE), { onConflict: 'id' })
@@ -436,10 +464,71 @@ export async function createStudioAdmin(email: string, name: string, tenantName:
   return data as { tenant_id: string; email: string; role: 'admin'; name: string }
 }
 
+export async function deleteStudioAdmin(email: string) {
+  const { data, error } = await supabase.rpc('studio_delete_admin', { p_email: email })
+  if (error) throw error
+  return data as { email: string; deleted: boolean }
+}
+
 export async function createStudioPartyAccount(type: 'distributor' | 'seller', name: string, email: string, phone: string, distributorId?: string, tenantId?: string) {
   const { data, error } = await supabase.rpc('studio_create_party_account', { p_type: type, p_name: name, p_email: email, p_phone: phone, p_distributor_id: distributorId ?? null, p_tenant_id: tenantId ?? null })
   if (error) throw error
   return data as { id: string; email: string; type: 'distributor' | 'seller'; name: string }
+}
+
+export async function updateStudioPartyAccount(input: { type: 'distributor' | 'seller'; id: string; name: string; email: string; phone?: string; distributorId?: string }) {
+  const { data, error } = await supabase.rpc('studio_update_party_account', { p_type: input.type, p_id: input.id, p_name: input.name, p_email: input.email, p_phone: input.phone ?? '', p_distributor_id: input.distributorId ?? null })
+  if (error) throw error
+  return data as { id: string; email: string; type: 'distributor' | 'seller'; name: string }
+}
+
+export async function deleteStudioPartyAccount(type: 'distributor' | 'seller', id: string) {
+  const { data, error } = await supabase.rpc('studio_delete_party_account', { p_type: type, p_id: id })
+  if (error) throw error
+  return data as { id: string; type: 'distributor' | 'seller'; deleted: boolean }
+}
+
+export async function deleteStudioPattern(id: string, tenantId?: string | null) {
+  let query = supabase.from('studio_patterns').delete().eq('id', id)
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { error } = await query
+  if (error) throw error
+}
+
+export async function loadStudioHeaders(tenantId: string): Promise<StudioHeader[]> {
+  const { data, error } = await supabase.from('studio_headers').select('id,name,content,active').eq('tenant_id', tenantId).order('name')
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> ?? []).map(row => ({ id: String(row.id), name: String(row.name), content: String(row.content ?? ''), active: row.active !== false }))
+}
+
+export async function saveStudioHeader(input: { id?: string; tenantId: string; name: string; content: string; active?: boolean }) {
+  const { data, error } = await supabase.rpc('studio_save_header', { p_id: input.id ?? null, p_tenant_id: input.tenantId, p_name: input.name, p_content: input.content, p_active: input.active ?? true })
+  if (error) throw error
+  return data as StudioHeader
+}
+
+export async function deleteStudioHeader(id: string) {
+  const { data, error } = await supabase.rpc('studio_delete_header', { p_id: id })
+  if (error) throw error
+  return data as { id: string; deleted: boolean }
+}
+
+export async function loadStudioWatermarks(tenantId: string): Promise<StudioWatermark[]> {
+  const { data, error } = await supabase.from('studio_watermarks').select('id,distributor_id,seller_id,name,text_value,opacity,position,active').eq('tenant_id', tenantId).order('name')
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> ?? []).map(row => ({ id: String(row.id), distributorId: String(row.distributor_id), sellerId: typeof row.seller_id === 'string' ? row.seller_id : undefined, name: String(row.name), text: String(row.text_value ?? ''), opacity: Number(row.opacity ?? 0.12), position: (['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(String(row.position)) ? String(row.position) : 'bottom-right') as StudioWatermark['position'], active: row.active !== false }))
+}
+
+export async function saveStudioWatermark(input: { id?: string; tenantId: string; distributorId: string; sellerId?: string; name: string; text: string; opacity: number; position: StudioWatermark['position']; active?: boolean }) {
+  const { data, error } = await supabase.rpc('studio_save_watermark', { p_id: input.id ?? null, p_tenant_id: input.tenantId, p_distributor_id: input.distributorId, p_seller_id: input.sellerId ?? null, p_name: input.name, p_text: input.text, p_opacity: input.opacity, p_position: input.position, p_active: input.active ?? true })
+  if (error) throw error
+  return data as StudioWatermark
+}
+
+export async function deleteStudioWatermark(id: string) {
+  const { data, error } = await supabase.rpc('studio_delete_watermark', { p_id: id })
+  if (error) throw error
+  return data as { id: string; deleted: boolean }
 }
 
 export async function loadStudioNetwork(tenantId: string) {

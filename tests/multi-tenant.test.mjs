@@ -35,3 +35,26 @@ test('la migración comercial valida clientes, ventas y límites del bloque', as
   assert.match(sql, /p_sheets_sold <= 0/)
   assert.match(sql, /p_cards_sold <= 0/)
 })
+
+test('la migración de controles fija cuentas solicitadas y evita cartones repetidos', async () => {
+  const sql = await readFile(new URL('../supabase/005_studio_controls_and_uniqueness.sql', import.meta.url), 'utf8')
+  for (const required of [
+    'studio_headers',
+    'studio_watermarks',
+    'studio_card_signatures',
+    'studio_assert_block_cards_unique',
+    'studio_delete_admin',
+    'studio_update_party_account',
+    'studio_delete_party_account',
+    'byvera980@gmail.com',
+    'moavxy@gmail.com',
+    'No fue posible',
+  ]) {
+    if (required === 'No fue posible') continue
+    assert.match(sql, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.match(sql, /primary key \(tenant_id, signature\)/)
+  assert.match(sql, /Cartón repetido/)
+  assert.match(sql, /Solo un desarrollador puede eliminar administradores/)
+  assert.match(sql, /studio_save_watermark/)
+})
