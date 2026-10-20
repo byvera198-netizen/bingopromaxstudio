@@ -62,6 +62,20 @@ create policy studio_generation_jobs_manage on public.studio_generation_jobs
   for all using (public.studio_can_access('generator'))
   with check (public.studio_can_access('generator'));
 
+drop policy if exists studio_members_read on public.studio_members;
+create policy studio_members_read on public.studio_members
+  for select using (
+    lower(email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+    or public.studio_actor_role() in ('developer', 'admin')
+  );
+
+drop policy if exists studio_audit_insert on public.studio_audit_events;
+create policy studio_audit_insert on public.studio_audit_events
+  for insert with check (
+    public.studio_actor_role() is not null
+    and lower(actor_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  );
+
 create index if not exists studio_generation_jobs_status_idx
   on public.studio_generation_jobs(status, updated_at desc);
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import JSZip from 'jszip'
 import {
@@ -133,4 +134,13 @@ test('evalúa un patrón usando bolilla extraída y centro libre', () => {
   assert.equal(isPatternComplete(card, cells, drawn), true)
   const incompleteDrawn = new Set([...drawn].slice(0, 4))
   assert.equal(isPatternComplete(card, cells, incompleteDrawn), false)
+})
+
+test('mantiene las políticas de mínimo privilegio en la migración backend', async () => {
+  const migration = await readFile(new URL('../supabase/002_backend_hardening.sql', import.meta.url), 'utf8')
+
+  assert.match(migration, /studio_generation_jobs/)
+  assert.match(migration, /lower\(email\) = lower\(coalesce\(auth\.jwt\(\) ->> 'email'/)
+  assert.match(migration, /lower\(actor_email\) = lower\(coalesce\(auth\.jwt\(\) ->> 'email'/)
+  assert.match(migration, /alter table public\.studio_generation_jobs enable row level security/)
 })
