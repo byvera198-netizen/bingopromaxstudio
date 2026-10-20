@@ -45,6 +45,14 @@ export type StudioMember = {
   permissions: Record<string, boolean>
 }
 
+export type StudioAuditEvent = {
+  id: string
+  action: string
+  detail: string
+  actor: string
+  createdAt: string
+}
+
 function asBlock(value: unknown): BingoBlock | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const block = value as Partial<BingoBlock>
@@ -125,6 +133,29 @@ export async function writeStudioAudit(action: string, detail: string) {
     actor_email: user.data.user.email.toLowerCase(),
   })
   if (result.error) throw result.error
+}
+
+export async function loadStudioAuditEvents(): Promise<StudioAuditEvent[]> {
+  const userId = await currentUserId()
+  if (!userId) return []
+  const { data, error } = await supabase
+    .from('studio_audit_events')
+    .select('id,action,detail,actor_email,created_at')
+    .order('created_at', { ascending: false })
+    .limit(500)
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> | null ?? []).flatMap((row) => {
+    const id = String(row.id ?? '')
+    const action = String(row.action ?? '')
+    if (!id || !action) return []
+    return [{
+      id,
+      action,
+      detail: String(row.detail ?? ''),
+      actor: String(row.actor_email ?? 'Sistema'),
+      createdAt: String(row.created_at ?? new Date().toISOString()),
+    }]
+  })
 }
 
 function mapGame(row: Record<string, unknown>): StudioGame {

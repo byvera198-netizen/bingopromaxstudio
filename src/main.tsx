@@ -3,7 +3,7 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
-import { loadStudioBlocks, loadStudioGame, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
+import { loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -404,7 +404,20 @@ function Users({ currentMember }: { currentMember: StudioMember | null }) {
 }
 function UserRow({ member }: { member: StudioMember }) { return <div className="user-row"><div className="avatar">{member.email.slice(0, 2).toUpperCase()}</div><div><b>{member.email}</b><span>{member.role === 'developer' ? 'Desarrollador' : member.role === 'admin' ? 'Administrador' : 'Operador'}</span></div><span className={`status ${member.active ? 'listo' : 'entregado'}`}>{member.active ? 'Activo' : 'Inactivo'}</span><button className="icon-button" disabled title="Los cambios se administran desde la siguiente versión de permisos">⋯</button></div> }
 
-function Audit() { const [events, setEvents] = useState<AuditEvent[]>(() => { try { return JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { return [] } }); const exportLog = () => { let latest = events; try { latest = JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { /* keep current events */ } setEvents(latest); triggerDownload(new Blob([JSON.stringify(latest, null, 2)], { type: 'application/json' }), 'bingo-promax-studio-auditoria.json') }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost" onClick={exportLog}><Icon name="download" /> Exportar registro</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Descargas, entregas y operaciones del estudio.</p></div><span className="preview-tag">{events.length ? `${events.length} EVENTOS` : 'SIN EVENTOS'}</span></div><div className="audit-list">{events.length ? events.slice(0, 100).map(event => <AuditRow key={event.id} icon={event.action === 'ENTREGA_BLOQUE' ? 'users' : 'download'} color={event.action === 'ENTREGA_BLOQUE' ? '#bda1ff' : '#6ee7d1'} title={event.detail} actor={event.actor} time={new Date(event.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />) : <AuditRow icon="spark" color="#f5c84b" title="El registro está listo para recibir operaciones" actor="Sistema" time="Ahora" />}</div></section></div> }
+function Audit() {
+  const [events, setEvents] = useState<AuditEvent[]>(() => {
+    try { return JSON.parse(localStorage.getItem('bps-audit') ?? '[]') as AuditEvent[] } catch { return [] }
+  })
+  useEffect(() => {
+    let active = true
+    void loadStudioAuditEvents().then((remote) => {
+      if (active && remote.length) setEvents(remote)
+    }).catch(() => { /* Offline mode keeps the local audit trail. */ })
+    return () => { active = false }
+  }, [])
+  const exportLog = () => triggerDownload(new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' }), 'bingo-promax-studio-auditoria.json')
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost" onClick={exportLog}><Icon name="download" /> Exportar registro</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Descargas, entregas y operaciones del estudio.</p></div><span className="preview-tag">{events.length ? `${events.length} EVENTOS` : 'SIN EVENTOS'}</span></div><div className="audit-list">{events.length ? events.slice(0, 100).map(event => <AuditRow key={event.id} icon={event.action === 'ENTREGA_BLOQUE' ? 'users' : 'download'} color={event.action === 'ENTREGA_BLOQUE' ? '#bda1ff' : '#6ee7d1'} title={event.detail} actor={event.actor} time={new Date(event.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />) : <AuditRow icon="spark" color="#f5c84b" title="El registro está listo para recibir operaciones" actor="Sistema" time="Ahora" />}</div></section></div>
+}
 function AuditRow({ icon, color, title, actor, time }: { icon: string; color: string; title: string; actor: string; time: string }) { return <div className="audit-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{actor}</span></div><time>{time}</time></div> }
 
 function App() {
