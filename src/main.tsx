@@ -3,6 +3,7 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
+import { loadStudioBlocks, syncStudioBlock, syncStudioInventory, writeStudioAudit } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -30,7 +31,7 @@ function openBlockDatabase(): Promise<IDBDatabase> {
   })
 }
 
-async function persistBlocks(blocks: BingoBlock[]) {
+async function persistBlocks(blocks: BingoBlock[], syncRemote = true) {
   const totalSheets = blocks.reduce((total, block) => total + block.pages, 0)
   try {
     if (totalSheets <= 2000) localStorage.setItem('bps-blocks', JSON.stringify(blocks))
@@ -45,9 +46,16 @@ async function persistBlocks(blocks: BingoBlock[]) {
       transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el inventario.')) }
     })
   } catch { /* The in-memory inventory remains available for the current session. */ }
+  if (syncRemote) {
+    try { await syncStudioInventory(blocks) } catch { /* The local inventory remains the offline source of truth. */ }
+  }
 }
 
 async function loadPersistedBlocks(): Promise<BingoBlock[]> {
+  try {
+    const remote = await loadStudioBlocks()
+    if (remote.length) return remote
+  } catch { /* The migration may not be installed yet; use local persistence. */ }
   try {
     const database = await openBlockDatabase()
     const snapshot = await new Promise<{ blocks?: BingoBlock[] } | undefined>((resolve, reject) => {
@@ -70,6 +78,7 @@ function appendAudit(action: string, detail: string) {
     const event: AuditEvent = { id: crypto.randomUUID(), action, detail, actor: localStorage.getItem('bps-email') ?? 'desconocido', createdAt: new Date().toISOString() }
     localStorage.setItem('bps-audit', JSON.stringify([event, ...current].slice(0, 1000)))
   } catch { /* storage unavailable */ }
+  void writeStudioAudit(action, detail).catch(() => { /* Offline mode keeps the local audit trail. */ })
 }
 
 const seedPatterns: Pattern[] = [
@@ -330,7 +339,7 @@ function App() {
   const replaceBlocks = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); void persistBlocks(nextBlocks) }
   const onGenerated = (nextBlocks: BingoBlock[]) => replaceBlocks(nextBlocks)
   const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
-  const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); void persistBlocks(next); return next }) }
+  const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false); if (updated) void syncStudioBlock(updated).catch(() => { /* Offline delivery remains local. */ }); return next }) }
   const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]
   return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
 }
