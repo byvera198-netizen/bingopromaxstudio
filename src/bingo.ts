@@ -54,7 +54,7 @@ function createCard(id: string, random: () => number): BingoCard {
   return { id, numbers }
 }
 
-export function generateBatch(campaign: string, totalSheets: number, startingPage = 1): BingoBlock[] {
+export function generateBatch(campaign: string, totalSheets: number, startingPage = 1, onProgress?: (percent: number) => void): BingoBlock[] {
   if (!Number.isInteger(totalSheets) || totalSheets < 100 || totalSheets > MAX_SHEETS) throw new Error(`La cantidad debe estar entre 100 y ${MAX_SHEETS.toLocaleString('es-EC')} hojas.`)
   const random = Math.random
   const blocks: BingoBlock[] = []
@@ -85,7 +85,9 @@ export function generateBatch(campaign: string, totalSheets: number, startingPag
       page += 1
     }
     blocks.push({ code: blockCode, campaign: batchCode, range: `${String(blockSheets[0].pageNumber).padStart(6, '0')} — ${String(blockSheets.at(-1)!.pageNumber).padStart(6, '0')}`, pages: pageCount, status: 'Listo', createdAt: new Date().toISOString(), sheets: blockSheets })
+    onProgress?.(Math.min(99, Math.round(((offset + pageCount) / totalSheets) * 100)))
   }
+  onProgress?.(100)
   return blocks
 }
 

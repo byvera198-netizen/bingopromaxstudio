@@ -50,4 +50,4 @@ Antes de publicar, comprueba que la URL final esté registrada en Supabase Auth.
 
 ## 5. Escala de generación
 
-La generación funciona en el navegador y guarda inventarios grandes en IndexedDB. Para lotes cercanos a 200.000 hojas, la siguiente mejora de producción debe mover la generación y creación de PDFs a un worker/cola de servidor, manteniendo el mismo formato JSON v1.1 y los mismos códigos de bloque.
+La generación funciona en un Web Worker del navegador y guarda inventarios grandes en IndexedDB. Los lotes cercanos a 200.000 hojas se descargan por bloque para evitar construir un ZIP gigante en memoria. Si se requiere generación desatendida desde un servidor, la siguiente evolución puede mover el mismo motor a una cola de backend, conservando el formato JSON v1.1 y los códigos de bloque.
