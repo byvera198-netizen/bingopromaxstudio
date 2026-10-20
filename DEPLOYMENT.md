@@ -10,10 +10,17 @@ La clave debe ser la publishable/anon. Nunca coloques una `service_role` en este
 
 ## 2. Base de datos y seguridad
 
-En el SQL Editor de Supabase ejecuta una sola vez:
+En el SQL Editor de Supabase ejecuta, en este orden:
 
 ```text
 supabase/001_studio.sql
+```
+
+Después ejecuta la segunda migración para activar la persistencia de checkpoints
+remotos, triggers de `updated_at`, índices y validaciones de integridad:
+
+```text
+supabase/002_backend_hardening.sql
 ```
 
 La migración crea inventario de bloques, partidas, patrones, auditoría, miembros y RLS. Las cuentas iniciales son:
@@ -51,3 +58,7 @@ Antes de publicar, comprueba que la URL final esté registrada en Supabase Auth.
 ## 5. Escala de generación
 
 La generación funciona en un Web Worker del navegador y guarda inventarios grandes en IndexedDB. Los lotes cercanos a 200.000 hojas se descargan por bloque para evitar construir un ZIP gigante en memoria. Si se requiere generación desatendida desde un servidor, la siguiente evolución puede mover el mismo motor a una cola de backend, conservando el formato JSON v1.1 y los códigos de bloque.
+
+Cuando la segunda migración está instalada, cada checkpoint activo se replica en
+`studio_generation_jobs`. Si Supabase no está disponible, Studio continúa con
+IndexedDB y sincroniza el inventario cuando vuelve la conexión.

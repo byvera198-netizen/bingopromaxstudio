@@ -3,7 +3,7 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, cardSignature, createBlockPdf, createBlocksZip, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
-import { loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
+import { clearStudioGenerationCheckpoint, loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioGenerationCheckpoint, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioGenerationCheckpoint, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -92,16 +92,23 @@ async function persistGenerationChunk(blocks: BingoBlock[]) {
 }
 
 async function saveGenerationCheckpoint(checkpoint: GenerationCheckpoint) {
-  const database = await openBlockDatabase()
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
-    transaction.objectStore(GENERATION_STORE_NAME).put(checkpoint)
-    transaction.oncomplete = () => { database.close(); resolve() }
-    transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el checkpoint.')) }
-  })
+  try {
+    const database = await openBlockDatabase()
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
+      transaction.objectStore(GENERATION_STORE_NAME).put(checkpoint)
+      transaction.oncomplete = () => { database.close(); resolve() }
+      transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el checkpoint.')) }
+    })
+  } catch { /* Supabase remains available when IndexedDB is unavailable. */ }
+  try { await saveStudioGenerationCheckpoint(checkpoint) } catch { /* Supabase is optional until the migration is applied. */ }
 }
 
 async function loadGenerationCheckpoint(): Promise<GenerationCheckpoint | null> {
+  try {
+    const remote = await loadStudioGenerationCheckpoint()
+    if (remote) return remote
+  } catch { /* Use the local checkpoint when the migration or network is unavailable. */ }
   try {
     const database = await openBlockDatabase()
     const checkpoint = await new Promise<GenerationCheckpoint | undefined>((resolve, reject) => {
@@ -114,7 +121,7 @@ async function loadGenerationCheckpoint(): Promise<GenerationCheckpoint | null> 
   } catch { return null }
 }
 
-async function clearGenerationCheckpoint() {
+async function clearGenerationCheckpoint(campaign: string) {
   try {
     const database = await openBlockDatabase()
     await new Promise<void>((resolve, reject) => {
@@ -124,6 +131,7 @@ async function clearGenerationCheckpoint() {
       transaction.onerror = () => { database.close(); reject(transaction.error) }
     })
   } catch { /* A completed generation remains usable even if cleanup is unavailable. */ }
+  try { await clearStudioGenerationCheckpoint(campaign) } catch { /* Local completion remains authoritative offline. */ }
 }
 
 async function loadPersistedBlocks(): Promise<BingoBlock[]> {
@@ -334,7 +342,7 @@ function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[
       }
       if (result.type === 'complete') {
         void checkpointChain.then(async () => {
-          await clearGenerationCheckpoint()
+          await clearGenerationCheckpoint(job.campaign)
           onGenerated([], 'complete')
           setProgress(100); setDone(true); setResumeJob(null); worker.terminate()
         }).catch((completionError) => finishWithError(completionError instanceof Error ? completionError.message : 'No se pudo finalizar la generación.'))

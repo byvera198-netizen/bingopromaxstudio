@@ -53,6 +53,16 @@ export type StudioAuditEvent = {
   createdAt: string
 }
 
+export type StudioGenerationCheckpoint = {
+  id: 'active'
+  campaign: string
+  totalSheets: number
+  completedSheets: number
+  nextPage: number
+  nextBlockNumber: number
+  updatedAt: string
+}
+
 function asBlock(value: unknown): BingoBlock | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const block = value as Partial<BingoBlock>
@@ -121,6 +131,58 @@ export async function syncStudioBlock(block: BingoBlock) {
   }, { onConflict: 'code' })
   if (campaignResult.error) throw campaignResult.error
   const result = await supabase.from('studio_blocks').upsert(blockRow(block, userId), { onConflict: 'code' })
+  if (result.error) throw result.error
+}
+
+export async function loadStudioGenerationCheckpoint(): Promise<StudioGenerationCheckpoint | null> {
+  const userId = await currentUserId()
+  if (!userId) return null
+  const { data, error } = await supabase
+    .from('studio_generation_jobs')
+    .select('campaign_code,total_sheets,completed_sheets,next_page,next_block_number,status,updated_at')
+    .eq('created_by', userId)
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  return {
+    id: 'active',
+    campaign: String(data.campaign_code),
+    totalSheets: Number(data.total_sheets),
+    completedSheets: Number(data.completed_sheets),
+    nextPage: Number(data.next_page),
+    nextBlockNumber: Number(data.next_block_number),
+    updatedAt: String(data.updated_at),
+  }
+}
+
+export async function saveStudioGenerationCheckpoint(checkpoint: StudioGenerationCheckpoint) {
+  const userId = await currentUserId()
+  if (!userId) return
+  const result = await supabase.from('studio_generation_jobs').upsert({
+    campaign_code: checkpoint.campaign,
+    total_sheets: checkpoint.totalSheets,
+    completed_sheets: checkpoint.completedSheets,
+    next_page: checkpoint.nextPage,
+    next_block_number: checkpoint.nextBlockNumber,
+    status: 'active',
+    created_by: userId,
+    updated_at: checkpoint.updatedAt,
+  }, { onConflict: 'campaign_code,created_by' })
+  if (result.error) throw result.error
+}
+
+export async function clearStudioGenerationCheckpoint(campaign: string) {
+  const userId = await currentUserId()
+  if (!userId) return
+  const result = await supabase
+    .from('studio_generation_jobs')
+    .update({ status: 'completed', updated_at: new Date().toISOString() })
+    .eq('campaign_code', campaign)
+    .eq('created_by', userId)
+    .eq('status', 'active')
   if (result.error) throw result.error
 }
 
