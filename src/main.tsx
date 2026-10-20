@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
@@ -9,6 +9,59 @@ const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
 type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'integration' | 'users' | 'audit'
 type Pattern = { id: string; name: string; description: string; group: string; color: string; cells: number[]; active: boolean }
 type AuditEvent = { id: string; action: string; detail: string; actor: string; createdAt: string }
+
+const BLOCK_DB_NAME = 'bingo-promax-studio'
+const BLOCK_DB_VERSION = 1
+const BLOCK_STORE_NAME = 'snapshots'
+
+function openBlockDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB no está disponible en este navegador.'))
+      return
+    }
+    const request = window.indexedDB.open(BLOCK_DB_NAME, BLOCK_DB_VERSION)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(BLOCK_STORE_NAME)) request.result.createObjectStore(BLOCK_STORE_NAME, { keyPath: 'id' })
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('No se pudo abrir el almacenamiento local.'))
+  })
+}
+
+async function persistBlocks(blocks: BingoBlock[]) {
+  const totalSheets = blocks.reduce((total, block) => total + block.pages, 0)
+  try {
+    if (totalSheets <= 2000) localStorage.setItem('bps-blocks', JSON.stringify(blocks))
+    else localStorage.removeItem('bps-blocks')
+  } catch { /* IndexedDB below is the durable path for large inventories. */ }
+  try {
+    const database = await openBlockDatabase()
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(BLOCK_STORE_NAME, 'readwrite')
+      transaction.objectStore(BLOCK_STORE_NAME).put({ id: 'current', blocks, savedAt: new Date().toISOString() })
+      transaction.oncomplete = () => { database.close(); resolve() }
+      transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el inventario.')) }
+    })
+  } catch { /* The in-memory inventory remains available for the current session. */ }
+}
+
+async function loadPersistedBlocks(): Promise<BingoBlock[]> {
+  try {
+    const database = await openBlockDatabase()
+    const snapshot = await new Promise<{ blocks?: BingoBlock[] } | undefined>((resolve, reject) => {
+      const request = database.transaction(BLOCK_STORE_NAME, 'readonly').objectStore(BLOCK_STORE_NAME).get('current')
+      request.onsuccess = () => resolve(request.result as { blocks?: BingoBlock[] } | undefined)
+      request.onerror = () => reject(request.error)
+    })
+    database.close()
+    if (Array.isArray(snapshot?.blocks)) return snapshot.blocks
+  } catch { /* Fall back to the fast localStorage path. */ }
+  try {
+    const stored = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]')
+    return Array.isArray(stored) ? stored as BingoBlock[] : []
+  } catch { return [] }
+}
 
 function appendAudit(action: string, detail: string) {
   try {
@@ -219,6 +272,6 @@ function UserRow({ email, role, initials }: { email: string; role: string; initi
 function Audit() { const [events, setEvents] = useState<AuditEvent[]>(() => { try { return JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { return [] } }); const exportLog = () => { let latest = events; try { latest = JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { /* keep current events */ } setEvents(latest); triggerDownload(new Blob([JSON.stringify(latest, null, 2)], { type: 'application/json' }), 'bingo-promax-studio-auditoria.json') }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost" onClick={exportLog}><Icon name="download" /> Exportar registro</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Descargas, entregas y operaciones del estudio.</p></div><span className="preview-tag">{events.length ? `${events.length} EVENTOS` : 'SIN EVENTOS'}</span></div><div className="audit-list">{events.length ? events.slice(0, 100).map(event => <AuditRow key={event.id} icon={event.action === 'ENTREGA_BLOQUE' ? 'users' : 'download'} color={event.action === 'ENTREGA_BLOQUE' ? '#bda1ff' : '#6ee7d1'} title={event.detail} actor={event.actor} time={new Date(event.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />) : <AuditRow icon="spark" color="#f5c84b" title="El registro está listo para recibir operaciones" actor="Sistema" time="Ahora" />}</div></section></div> }
 function AuditRow({ icon, color, title, actor, time }: { icon: string; color: string; title: string; actor: string; time: string }) { return <div className="audit-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{actor}</span></div><time>{time}</time></div> }
 
-function App() { const [email, setEmail] = useState<string | null>(() => localStorage.getItem('bps-email')); const [view, setView] = useState<View>('dashboard'); const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } }); const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a']); if (!email) return <Login onLogin={(value) => { localStorage.setItem('bps-email', value); setEmail(value) }} />; const logout = () => { localStorage.removeItem('bps-email'); setEmail(null) }; const onGenerated = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); localStorage.setItem('bps-blocks', JSON.stringify(nextBlocks)) }; const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); localStorage.setItem('bps-blocks', JSON.stringify(merged)); return merged }) }; const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]; return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={logout} />{content}</main></div> }
+function App() { const [email, setEmail] = useState<string | null>(() => localStorage.getItem('bps-email')); const [view, setView] = useState<View>('dashboard'); const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } }); const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a']); useEffect(() => { if (!blocks.length) void loadPersistedBlocks().then((stored) => { if (stored.length) setBlocks(stored) }) }, [blocks.length]); if (!email) return <Login onLogin={(value) => { localStorage.setItem('bps-email', value); setEmail(value) }} />; const logout = () => { localStorage.removeItem('bps-email'); setEmail(null) }; const replaceBlocks = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); void persistBlocks(nextBlocks) }; const onGenerated = (nextBlocks: BingoBlock[]) => replaceBlocks(nextBlocks); const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }; const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); void persistBlocks(next); return next }) }; const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]; return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={logout} />{content}</main></div> }
 
 createRoot(document.getElementById('root')!).render(<App />)
