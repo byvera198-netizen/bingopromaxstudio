@@ -3,12 +3,12 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, cardSignature, createBlockPdf, createBlocksZip, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
-import { clearStudioGenerationCheckpoint, loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioGenerationCheckpoint, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioGenerationCheckpoint, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
+import { clearStudioGenerationCheckpoint, createStudioAdmin, createStudioPartyAccount, loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioGenerationCheckpoint, loadStudioMember, loadStudioMembers, loadStudioNetwork, loadStudioPatterns, loadStudioTenants, saveStudioGenerationCheckpoint, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, transferStudioBlock, writeStudioAudit, type StudioGame, type StudioMember, type StudioTenant, type StudioParty, type StudioTransfer } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
 
-type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'integration' | 'users' | 'audit'
+type View = 'dashboard' | 'generator' | 'blocks' | 'games' | 'patterns' | 'integration' | 'users' | 'network' | 'audit'
 type Pattern = { id: string; name: string; description: string; group: string; color: string; cells: number[]; active: boolean }
 type AuditEvent = { id: string; action: string; detail: string; actor: string; createdAt: string }
 const permissionOptions: Array<{ id: View; label: string }> = [
@@ -39,13 +39,15 @@ type GenerationCheckpoint = {
   updatedAt: string
 }
 
-function openBlockDatabase(): Promise<IDBDatabase> {
+function tenantKey(tenantId?: string | null) { return tenantId ? tenantId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 48) : 'shared' }
+
+function openBlockDatabase(tenantId?: string | null): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
       reject(new Error('IndexedDB no está disponible en este navegador.'))
       return
     }
-    const request = window.indexedDB.open(BLOCK_DB_NAME, BLOCK_DB_VERSION)
+    const request = window.indexedDB.open(BLOCK_DB_NAME + '-' + tenantKey(tenantId), BLOCK_DB_VERSION)
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(SNAPSHOT_STORE_NAME)) request.result.createObjectStore(SNAPSHOT_STORE_NAME, { keyPath: 'id' })
       if (!request.result.objectStoreNames.contains(BLOCK_STORE_NAME)) request.result.createObjectStore(BLOCK_STORE_NAME, { keyPath: 'code' })
@@ -56,14 +58,15 @@ function openBlockDatabase(): Promise<IDBDatabase> {
   })
 }
 
-async function persistBlocks(blocks: BingoBlock[], syncRemote = true) {
+async function persistBlocks(blocks: BingoBlock[], syncRemote = true, tenantId?: string | null) {
   const totalSheets = blocks.reduce((total, block) => total + block.pages, 0)
   try {
-    if (totalSheets <= 2000) localStorage.setItem('bps-blocks', JSON.stringify(blocks))
-    else localStorage.removeItem('bps-blocks')
+    const key = 'bps-blocks-' + tenantKey(tenantId)
+    if (totalSheets <= 2000) localStorage.setItem(key, JSON.stringify(blocks))
+    else localStorage.removeItem(key)
   } catch { /* IndexedDB below is the durable path for large inventories. */ }
   try {
-    const database = await openBlockDatabase()
+    const database = await openBlockDatabase(tenantId)
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction([SNAPSHOT_STORE_NAME, BLOCK_STORE_NAME], 'readwrite')
       const blockStore = transaction.objectStore(BLOCK_STORE_NAME)
@@ -75,13 +78,13 @@ async function persistBlocks(blocks: BingoBlock[], syncRemote = true) {
     })
   } catch { /* The in-memory inventory remains available for the current session. */ }
   if (syncRemote) {
-    try { await syncStudioInventory(blocks) } catch { /* The local inventory remains the offline source of truth. */ }
+    try { await syncStudioInventory(blocks, tenantId) } catch { /* The local inventory remains the offline source of truth. */ }
   }
 }
 
-async function persistGenerationChunk(blocks: BingoBlock[]) {
+async function persistGenerationChunk(blocks: BingoBlock[], tenantId?: string | null) {
   if (!blocks.length) return
-  const database = await openBlockDatabase()
+  const database = await openBlockDatabase(tenantId)
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(BLOCK_STORE_NAME, 'readwrite')
     const store = transaction.objectStore(BLOCK_STORE_NAME)
@@ -91,9 +94,9 @@ async function persistGenerationChunk(blocks: BingoBlock[]) {
   })
 }
 
-async function saveGenerationCheckpoint(checkpoint: GenerationCheckpoint) {
+async function saveGenerationCheckpoint(checkpoint: GenerationCheckpoint, tenantId?: string | null) {
   try {
-    const database = await openBlockDatabase()
+    const database = await openBlockDatabase(tenantId)
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
       transaction.objectStore(GENERATION_STORE_NAME).put(checkpoint)
@@ -101,16 +104,16 @@ async function saveGenerationCheckpoint(checkpoint: GenerationCheckpoint) {
       transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el checkpoint.')) }
     })
   } catch { /* Supabase remains available when IndexedDB is unavailable. */ }
-  try { await saveStudioGenerationCheckpoint(checkpoint) } catch { /* Supabase is optional until the migration is applied. */ }
+  try { await saveStudioGenerationCheckpoint(checkpoint, tenantId) } catch { /* Supabase is optional until the migration is applied. */ }
 }
 
-async function loadGenerationCheckpoint(): Promise<GenerationCheckpoint | null> {
+async function loadGenerationCheckpoint(tenantId?: string | null): Promise<GenerationCheckpoint | null> {
   try {
-    const remote = await loadStudioGenerationCheckpoint()
+    const remote = await loadStudioGenerationCheckpoint(tenantId)
     if (remote) return remote
   } catch { /* Use the local checkpoint when the migration or network is unavailable. */ }
   try {
-    const database = await openBlockDatabase()
+    const database = await openBlockDatabase(tenantId)
     const checkpoint = await new Promise<GenerationCheckpoint | undefined>((resolve, reject) => {
       const request = database.transaction(GENERATION_STORE_NAME, 'readonly').objectStore(GENERATION_STORE_NAME).get('active')
       request.onsuccess = () => resolve(request.result as GenerationCheckpoint | undefined)
@@ -121,9 +124,9 @@ async function loadGenerationCheckpoint(): Promise<GenerationCheckpoint | null> 
   } catch { return null }
 }
 
-async function clearGenerationCheckpoint(campaign: string) {
+async function clearGenerationCheckpoint(campaign: string, tenantId?: string | null) {
   try {
-    const database = await openBlockDatabase()
+    const database = await openBlockDatabase(tenantId)
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(GENERATION_STORE_NAME, 'readwrite')
       transaction.objectStore(GENERATION_STORE_NAME).delete('active')
@@ -131,16 +134,16 @@ async function clearGenerationCheckpoint(campaign: string) {
       transaction.onerror = () => { database.close(); reject(transaction.error) }
     })
   } catch { /* A completed generation remains usable even if cleanup is unavailable. */ }
-  try { await clearStudioGenerationCheckpoint(campaign) } catch { /* Local completion remains authoritative offline. */ }
+  try { await clearStudioGenerationCheckpoint(campaign, tenantId) } catch { /* Local completion remains authoritative offline. */ }
 }
 
-async function loadPersistedBlocks(): Promise<BingoBlock[]> {
+async function loadPersistedBlocks(tenantId?: string | null): Promise<BingoBlock[]> {
   let remoteBlocks: BingoBlock[] = []
   try {
-    remoteBlocks = await loadStudioBlocks()
+    remoteBlocks = await loadStudioBlocks(tenantId)
   } catch { /* The migration may not be installed yet; use local persistence. */ }
   try {
-    const database = await openBlockDatabase()
+    const database = await openBlockDatabase(tenantId)
     const storedBlocks = await new Promise<BingoBlock[]>((resolve, reject) => {
       const request = database.transaction(BLOCK_STORE_NAME, 'readonly').objectStore(BLOCK_STORE_NAME).getAll()
       request.onsuccess = () => resolve((request.result as BingoBlock[] | undefined) ?? [])
@@ -162,7 +165,7 @@ async function loadPersistedBlocks(): Promise<BingoBlock[]> {
   } catch { /* Fall back to the fast localStorage path. */ }
   if (remoteBlocks.length) return remoteBlocks
   try {
-    const stored = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]')
+    const stored = JSON.parse(localStorage.getItem('bps-blocks-' + tenantKey(tenantId)) ?? '[]')
     return Array.isArray(stored) ? stored as BingoBlock[] : []
   } catch { return [] }
 }
@@ -231,11 +234,12 @@ function Icon({ name }: { name: string }) {
 
 function canAccessView(member: StudioMember | null, view: View) {
   if (!member || member.role === 'developer' || member.role === 'admin') return true
+  if (view === 'network') return member.role === 'distributor' || member.role === 'seller'
   return member.permissions[view] === true
 }
 
 function roleLabel(role: StudioMember['role'] | undefined) {
-  return role === 'developer' ? 'Desarrollador' : role === 'admin' ? 'Administrador' : 'Operador'
+  return role === 'developer' ? 'Desarrollador' : role === 'admin' ? 'Administrador' : role === 'distributor' ? 'Distribuidor' : role === 'seller' ? 'Vendedor' : 'Operador'
 }
 
 function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
@@ -246,10 +250,7 @@ function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     const normalized = email.trim().toLowerCase()
-    if (!ALLOWED_EMAILS.includes(normalized)) {
-      setError('Esta cuenta todavía no está autorizada para acceder.')
-      return
-    }
+    if (!normalized.includes('@')) { setError('Escribe un correo válido.'); return }
     setBusy(true)
     setError('')
     setMessage('')
@@ -280,7 +281,7 @@ function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
 
 function Sidebar({ view, setView, email, blocks, member }: { view: View; setView: (view: View) => void; email: string; blocks: BingoBlock[]; member: StudioMember | null }) {
   const sections = [
-    { label: 'OPERACIÓN', items: [['dashboard', 'grid', 'Resumen'], ['generator', 'spark', 'Generar cartones'], ['blocks', 'layers', 'Bloques y hojas'], ['games', 'play', 'Sala de juego']] },
+    { label: 'OPERACIÓN', items: [['dashboard', 'grid', 'Resumen'], ['generator', 'spark', 'Generar cartones'], ['blocks', 'layers', 'Bloques y hojas'], ['network', 'users', 'Red comercial'], ['games', 'play', 'Sala de juego']] },
     { label: 'CONFIGURACIÓN', items: [['patterns', 'spark', 'Patrones'], ['integration', 'arrow', 'Integración ProMax'], ['users', 'users', 'Usuarios'], ['audit', 'audit', 'Auditoría']] },
   ] as const
   return <aside className="sidebar">
@@ -291,9 +292,9 @@ function Sidebar({ view, setView, email, blocks, member }: { view: View; setView
   </aside>
 }
 
-function Topbar({ view, onLogout }: { view: View; onLogout: () => void }) {
-  const titles: Record<View, [string, string]> = { dashboard: ['Resumen general', 'Tu operación, en un vistazo.'], generator: ['Generador de cartones', 'Crea hojas listas para distribuir.'], blocks: ['Bloques y hojas', 'Organiza tus lotes de distribución.'], games: ['Sala de juego', 'Prepara y controla una nueva partida.'], patterns: ['Patrones de juego', 'Define las figuras que se jugarán.'], integration: ['Integración ProMax', 'Intercambia cartones y partidas con Bingo Control ProMax.'], users: ['Usuarios y accesos', 'Administra el equipo autorizado.'], audit: ['Auditoría', 'Actividad reciente del estudio.'] }
-  return <header className="topbar"><div><div className="breadcrumb">BINGO PROMAX STUDIO <span>/</span> {titles[view][0].toUpperCase()}</div><h2>{titles[view][0]}</h2></div><div className="top-actions"><div className="status-dot"><span /> Sistema operativo</div><button className="ghost" onClick={onLogout}>Salir</button><button className="user-mini">BV</button></div></header>
+function Topbar({ view, onLogout, tenants, activeTenantId, onTenantChange }: { view: View; onLogout: () => void; tenants: StudioTenant[]; activeTenantId?: string; onTenantChange: (tenantId: string) => void }) {
+  const titles: Record<View, [string, string]> = { dashboard: ['Resumen general', 'Tu operación, en un vistazo.'], generator: ['Generador de cartones', 'Crea hojas listas para distribuir.'], blocks: ['Bloques y hojas', 'Organiza tus lotes de distribución.'], network: ['Red comercial', 'Distribuidores, vendedores y transferencias.'], games: ['Sala de juego', 'Prepara y controla una nueva partida.'], patterns: ['Patrones de juego', 'Define las figuras que se jugarán.'], integration: ['Integración ProMax', 'Intercambia cartones y partidas con Bingo Control ProMax.'], users: ['Usuarios y accesos', 'Administra el equipo autorizado.'], audit: ['Auditoría', 'Actividad reciente del estudio.'] }
+  return <header className="topbar"><div><div className="breadcrumb">BINGO PROMAX STUDIO <span>/</span> {titles[view][0].toUpperCase()}</div><h2>{titles[view][0]}</h2></div><div className="top-actions">{tenants.length > 0 && <select className="tenant-select" value={activeTenantId ?? ''} onChange={event => onTenantChange(event.target.value)} aria-label="Espacio de administrador">{tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</select>}<div className="status-dot"><span /> Sistema operativo</div><button className="ghost" onClick={onLogout}>Salir</button><button className="user-mini">BV</button></div></header>
 }
 
 function StatCard({ label, value, detail, accent, icon }: { label: string; value: string; detail: string; accent: string; icon: string }) {
@@ -313,7 +314,7 @@ function QuickAction({ icon, title, text, onClick }: { icon: string; title: stri
 
 type GenerationUpdate = 'checkpoint' | 'complete'
 
-function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[], update?: GenerationUpdate) => void; setView: (view: View) => void }) {
+function Generator({ onGenerated, setView, tenantId }: { onGenerated: (blocks: BingoBlock[], update?: GenerationUpdate) => void; setView: (view: View) => void; tenantId?: string }) {
   const [sheets, setSheets] = useState(100)
   const [code, setCode] = useState('BP-2026')
   const [progress, setProgress] = useState(0)
@@ -321,11 +322,11 @@ function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[
   const [generated, setGenerated] = useState<BingoBlock[]>([])
   const [error, setError] = useState('')
   const [resumeJob, setResumeJob] = useState<GenerationCheckpoint | null>(null)
-  useEffect(() => { void loadGenerationCheckpoint().then(setResumeJob) }, [])
+  useEffect(() => { void loadGenerationCheckpoint(tenantId).then(setResumeJob) }, [tenantId])
 
   const runGeneration = async (job: GenerationCheckpoint, usedSignatures: string[] = []) => {
     setError(''); setDone(false); setProgress(Math.max(1, Math.round((job.completedSheets / job.totalSheets) * 100)))
-    try { await saveGenerationCheckpoint(job) } catch { /* The worker can still finish in memory. */ }
+    try { await saveGenerationCheckpoint(job, tenantId) } catch { /* The worker can still finish in memory. */ }
     const worker = new Worker(new URL('./generator.worker.ts', import.meta.url), { type: 'module' })
     let checkpointChain = Promise.resolve()
     const finishWithError = (message: string) => { setProgress(0); setError(message); setResumeJob(job); worker.terminate() }
@@ -336,13 +337,13 @@ function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[
         setGenerated((current) => [...current, ...result.blocks])
         onGenerated(result.blocks, 'checkpoint')
         checkpointChain = checkpointChain.then(async () => {
-          await persistGenerationChunk(result.blocks)
-          await saveGenerationCheckpoint({ ...job, completedSheets: result.completedSheets, nextPage: result.nextPage, nextBlockNumber: result.nextBlockNumber, updatedAt: new Date().toISOString() })
+          await persistGenerationChunk(result.blocks, tenantId)
+          await saveGenerationCheckpoint({ ...job, completedSheets: result.completedSheets, nextPage: result.nextPage, nextBlockNumber: result.nextBlockNumber, updatedAt: new Date().toISOString() }, tenantId)
         }).catch((checkpointError) => { finishWithError(checkpointError instanceof Error ? checkpointError.message : 'No se pudo guardar el progreso de generación.') })
       }
       if (result.type === 'complete') {
         void checkpointChain.then(async () => {
-          await clearGenerationCheckpoint(job.campaign)
+          await clearGenerationCheckpoint(job.campaign, tenantId)
           onGenerated([], 'complete')
           setProgress(100); setDone(true); setResumeJob(null); worker.terminate()
         }).catch((completionError) => finishWithError(completionError instanceof Error ? completionError.message : 'No se pudo finalizar la generación.'))
@@ -353,7 +354,7 @@ function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[
     worker.postMessage({ campaign: job.campaign, totalSheets: job.totalSheets - job.completedSheets, startingPage: job.nextPage, startingBlockNumber: job.nextBlockNumber, chunkSheets: GENERATION_CHUNK_SHEETS, usedSignatures })
   }
 
-  const normalizeCampaign = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '-') || 'BPS-2026'
+  const normalizeCampaign = (value: string) => { const base = value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '-') || 'BPS-2026'; return tenantId ? base + '-' + tenantId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase() : base }
   const generate = () => {
     if (resumeJob) { void resumeGeneration(); return }
     const campaign = normalizeCampaign(code)
@@ -362,7 +363,7 @@ function Generator({ onGenerated, setView }: { onGenerated: (blocks: BingoBlock[
   }
   const resumeGeneration = async () => {
     if (!resumeJob) return
-    const stored = await loadPersistedBlocks()
+    const stored = await loadPersistedBlocks(tenantId)
     const existing = stored.filter((block) => block.campaign === resumeJob.campaign)
     const usedSignatures = Array.from(new Set(existing.flatMap((block) => block.sheets.flatMap((sheet) => sheet.cards.map((card) => cardSignature(card.numbers))))))
     setCode(resumeJob.campaign); setSheets(resumeJob.totalSheets); setGenerated(existing); void runGeneration(resumeJob, usedSignatures)
@@ -387,7 +388,7 @@ function LegacyBlocks({ blocks: initialBlocks, setView, onUpdate }: { blocks: Bi
 function DeliveryModal({ block, distributor, notes, setDistributor, setNotes, onClose, onConfirm }: { block: BingoBlock; distributor: string; notes: string; setDistributor: (value: string) => void; setNotes: (value: string) => void; onClose: () => void; onConfirm: () => void }) { return <div className="modal-backdrop"><section className="delivery-modal"><div className="panel-heading"><div><div className="eyebrow">REGISTRO DE ENTREGA</div><h3>Confirmar distribución</h3><p>Asigna el bloque a un distribuidor o vendedor.</p></div><button className="icon-button" onClick={onClose}>×</button></div><div className="delivery-summary"><b>{block.code}</b><span>{block.pages} hojas · {block.pages * 4} cartones</span></div><label>Distribuidor o vendedor<input autoFocus value={distributor} onChange={event => setDistributor(event.target.value)} placeholder="Ej. Distribución Norte" /></label><label>Notas de entrega <small>opcional</small><textarea value={notes} onChange={event => setNotes(event.target.value)} placeholder="Ej. Entregado en bodega principal" /></label><div className="editor-actions"><button className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={!distributor.trim()} onClick={onConfirm}><Icon name="check" /> Confirmar entrega</button></div></section></div> }
 
 
-function Blocks({ blocks: initialBlocks, setView, onUpdate }: { blocks: BingoBlock[]; setView: (view: View) => void; onUpdate?: (code: string, patch: Partial<BingoBlock>) => void }) { const [blocks, setBlocks] = useState(initialBlocks); const [downloading, setDownloading] = useState(''); const [query, setQuery] = useState(''); const [statusFilter, setStatusFilter] = useState<'Todos' | BingoBlock['status']>('Todos'); const [distributorFilter, setDistributorFilter] = useState('Todos'); const [deliveryBlock, setDeliveryBlock] = useState<BingoBlock | null>(null); const [deliveryDistributor, setDeliveryDistributor] = useState(''); const [deliveryNotes, setDeliveryNotes] = useState(''); const applyUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => current.map(block => block.code === code ? { ...block, ...patch } : block)); if (onUpdate) onUpdate(code, patch); else { try { const stored: BingoBlock[] = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]'); localStorage.setItem('bps-blocks', JSON.stringify(stored.map(block => block.code === code ? { ...block, ...patch } : block))) } catch { /* storage unavailable */ } } }; const download = (block: BingoBlock) => { setDownloading(block.code); triggerDownload(new Blob([createBlockPdf(block)], { type: 'application/pdf' }), `${block.code}.pdf`); applyUpdate(block.code, { status: 'Descargado' }); appendAudit('DESCARGA_BLOQUE', `Bloque ${block.code} descargado`); window.setTimeout(() => setDownloading(''), 700) }; const openDelivery = (block: BingoBlock) => { setDeliveryBlock(block); setDeliveryDistributor(block.distributor ?? ''); setDeliveryNotes(block.notes ?? '') }; const confirmDelivery = () => { if (!deliveryBlock || !deliveryDistributor.trim()) return; const recipient = deliveryDistributor.trim(); applyUpdate(deliveryBlock.code, { status: 'Entregado', distributor: recipient, notes: deliveryNotes.trim(), deliveredAt: new Date().toISOString() }); appendAudit('ENTREGA_BLOQUE', `Bloque ${deliveryBlock.code} entregado a ${recipient}`); setDeliveryBlock(null); setDeliveryDistributor(''); setDeliveryNotes('') }; const downloadAll = async () => { if (!blocks.length || blocks.reduce((total, block) => total + block.pages, 0) > MAX_BULK_ZIP_SHEETS) return; setDownloading('all'); const blob = await createBlocksZip(blocks); triggerDownload(blob, 'bingo-promax-studio-bloques.zip'); appendAudit('DESCARGA_LOTE', `${blocks.length} bloques descargados en ZIP`); setDownloading('') }; const distributors = Array.from(new Set(blocks.map(block => block.distributor).filter((value): value is string => Boolean(value)))).sort(); const visibleBlocks = blocks.filter(block => { const normalized = query.trim().toLowerCase(); const matchesQuery = !normalized || [block.code, block.range, block.distributor ?? '', block.notes ?? ''].some(value => value.toLowerCase().includes(normalized)); const matchesStatus = statusFilter === 'Todos' || block.status === statusFilter; const matchesDistributor = distributorFilter === 'Todos' || (block.distributor ?? 'Sin asignar') === distributorFilter; return matchesQuery && matchesStatus && matchesDistributor }); const totalSheets = blocks.reduce((total, block) => total + block.pages, 0); const deliveredSheets = blocks.filter(block => block.status === 'Entregado').reduce((total, block) => total + block.pages, 0); return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">DISTRIBUCIÓN</div><h1>Bloques bajo control.</h1><p className="muted">Cada bloque contiene hasta 40 hojas y 160 cartones listos para entregar.</p></div><div className="game-buttons"><button className="ghost" onClick={downloadAll} disabled={!blocks.length || downloading !== '' || totalSheets > MAX_BULK_ZIP_SHEETS} title={totalSheets > MAX_BULK_ZIP_SHEETS ? 'Descarga cada bloque individualmente para este lote grande.' : undefined}><Icon name="download" /> {downloading === 'all' ? 'Preparando ZIP…' : totalSheets > MAX_BULK_ZIP_SHEETS ? 'Descarga por bloques' : 'Descargar todo'}</button><button className="primary" onClick={() => setView('generator')}><Icon name="plus" /> Nuevo lote</button></div></div><div className="stats-grid compact-stats"><StatCard label="Bloques disponibles" value={String(blocks.length)} detail="Listos para descargar" accent="#f5c84b" icon="layers" /><StatCard label="Hojas en inventario" value={totalSheets.toLocaleString('es-EC')} detail="Todos los estados" accent="#6ee7d1" icon="grid" /><StatCard label="Cartones entregados" value={(deliveredSheets * 4).toLocaleString('es-EC')} detail={`${deliveredSheets.toLocaleString('es-EC')} hojas entregadas`} accent="#bda1ff" icon="download" /></div><section className="panel distribution-toolbar"><label><span>Buscar bloque</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Código, rango o nota…" /></label><label><span>Estado</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Todos' | BingoBlock['status'])}><option>Todos</option><option>Listo</option><option>Descargado</option><option>Entregado</option></select></label><label><span>Distribuidor</span><select value={distributorFilter} onChange={event => setDistributorFilter(event.target.value)}><option>Todos</option>{distributors.map(distributor => <option key={distributor}>{distributor}</option>)}<option>Sin asignar</option></select></label><div className="filter-result"><b>{visibleBlocks.length}</b><span>de {blocks.length} bloques</span></div></section><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">INVENTARIO DE DISTRIBUCIÓN</div><h3>Todos los bloques</h3></div><span className="preview-tag">{blocks.length ? 'GENERACIÓN LOCAL' : 'SIN LOTES'}</span></div>{visibleBlocks.length ? <div className="table-wrap"><table><thead><tr><th>Bloque</th><th>Rango de hojas</th><th>Contenido</th><th>Creado</th><th>Distribuidor</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleBlocks.map(block => <tr key={block.code}><td><b className="code-cell">{block.code}</b></td><td>{block.range}</td><td>{block.pages} hojas <span className="muted-inline">· {block.pages * 4} cartones</span></td><td>{new Date(block.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{block.distributor ?? 'Sin asignar'}{block.deliveredAt && <small className="table-subline">{new Date(block.deliveredAt).toLocaleDateString('es-EC')}{block.notes ? ` · ${block.notes}` : ''}</small>}</td><td><span className={`status ${block.status === 'Entregado' ? 'entregado' : 'listo'}`}>{block.status}</span></td><td><div className="table-actions"><button className="icon-button" title="Descargar PDF" onClick={() => download(block)}><Icon name="download" /></button>{block.status !== 'Entregado' && <button className="ghost compact" onClick={() => openDelivery(block)}>Entregar</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><span>▤</span><b>{blocks.length ? 'No hay coincidencias' : 'Aún no tienes bloques generados'}</b><p>{blocks.length ? 'Prueba con otro código, estado o distribuidor.' : 'Genera tu primer lote para ver aquí las hojas y sus archivos.'}</p>{!blocks.length && <button className="primary" onClick={() => setView('generator')}>Crear primer lote <Icon name="arrow" /></button>}</div>}</section>{deliveryBlock && <DeliveryModal block={deliveryBlock} distributor={deliveryDistributor} notes={deliveryNotes} setDistributor={setDeliveryDistributor} setNotes={setDeliveryNotes} onClose={() => setDeliveryBlock(null)} onConfirm={confirmDelivery} />}</div> }
+function Blocks({ blocks: initialBlocks, setView, onUpdate }: { blocks: BingoBlock[]; setView: (view: View) => void; onUpdate?: (code: string, patch: Partial<BingoBlock>) => void }) { const [blocks, setBlocks] = useState(initialBlocks); const [downloading, setDownloading] = useState(''); const [query, setQuery] = useState(''); const [statusFilter, setStatusFilter] = useState<'Todos' | BingoBlock['status']>('Todos'); const [distributorFilter, setDistributorFilter] = useState('Todos'); const [deliveryBlock, setDeliveryBlock] = useState<BingoBlock | null>(null); const [deliveryDistributor, setDeliveryDistributor] = useState(''); const [deliveryNotes, setDeliveryNotes] = useState(''); const applyUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => current.map(block => block.code === code ? { ...block, ...patch } : block)); if (onUpdate) onUpdate(code, patch); else { try { const stored: BingoBlock[] = JSON.parse(localStorage.getItem('bps-blocks') ?? '[]'); localStorage.setItem('bps-blocks', JSON.stringify(stored.map(block => block.code === code ? { ...block, ...patch } : block))) } catch { /* storage unavailable */ } } }; const download = (block: BingoBlock) => { setDownloading(block.code); triggerDownload(new Blob([createBlockPdf(block)], { type: 'application/pdf' }), `${block.code}.pdf`); applyUpdate(block.code, { status: 'Descargado' }); appendAudit('DESCARGA_BLOQUE', `Bloque ${block.code} descargado`); window.setTimeout(() => setDownloading(''), 700) }; const openDelivery = (block: BingoBlock) => { setDeliveryBlock(block); setDeliveryDistributor(block.distributor ?? ''); setDeliveryNotes(block.notes ?? '') }; const confirmDelivery = () => { if (!deliveryBlock || !deliveryDistributor.trim()) return; const recipient = deliveryDistributor.trim(); applyUpdate(deliveryBlock.code, { status: 'Entregado', distributor: recipient, notes: deliveryNotes.trim(), deliveredAt: new Date().toISOString() }); appendAudit('ENTREGA_BLOQUE', `Bloque ${deliveryBlock.code} entregado a ${recipient}`); setDeliveryBlock(null); setDeliveryDistributor(''); setDeliveryNotes('') }; const downloadAll = async () => { if (!blocks.length || blocks.reduce((total, block) => total + block.pages, 0) > MAX_BULK_ZIP_SHEETS) return; setDownloading('all'); const blob = await createBlocksZip(blocks); triggerDownload(blob, 'bingo-promax-studio-bloques.zip'); appendAudit('DESCARGA_LOTE', `${blocks.length} bloques descargados en ZIP`); setDownloading('') }; const distributors = Array.from(new Set(blocks.map(block => block.distributor).filter((value): value is string => Boolean(value)))).sort(); const visibleBlocks = blocks.filter(block => { const normalized = query.trim().toLowerCase(); const matchesQuery = !normalized || [block.code, block.range, block.distributor ?? '', block.notes ?? ''].some(value => value.toLowerCase().includes(normalized)); const matchesStatus = statusFilter === 'Todos' || block.status === statusFilter; const matchesDistributor = distributorFilter === 'Todos' || (block.distributor ?? 'Sin asignar') === distributorFilter; return matchesQuery && matchesStatus && matchesDistributor }); const totalSheets = blocks.reduce((total, block) => total + block.pages, 0); const deliveredSheets = blocks.filter(block => block.status === 'Entregado').reduce((total, block) => total + block.pages, 0); return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">DISTRIBUCIÓN</div><h1>Bloques bajo control.</h1><p className="muted">Cada bloque contiene hasta 40 hojas y 160 cartones listos para entregar.</p></div><div className="game-buttons"><button className="ghost" onClick={downloadAll} disabled={!blocks.length || downloading !== '' || totalSheets > MAX_BULK_ZIP_SHEETS} title={totalSheets > MAX_BULK_ZIP_SHEETS ? 'Descarga cada bloque individualmente para este lote grande.' : undefined}><Icon name="download" /> {downloading === 'all' ? 'Preparando ZIP…' : totalSheets > MAX_BULK_ZIP_SHEETS ? 'Descarga por bloques' : 'Descargar todo'}</button><button className="primary" onClick={() => setView('generator')}><Icon name="plus" /> Nuevo lote</button></div></div><div className="stats-grid compact-stats"><StatCard label="Bloques disponibles" value={String(blocks.length)} detail="Listos para descargar" accent="#f5c84b" icon="layers" /><StatCard label="Hojas en inventario" value={totalSheets.toLocaleString('es-EC')} detail="Todos los estados" accent="#6ee7d1" icon="grid" /><StatCard label="Cartones entregados" value={(deliveredSheets * 4).toLocaleString('es-EC')} detail={`${deliveredSheets.toLocaleString('es-EC')} hojas entregadas`} accent="#bda1ff" icon="download" /></div><section className="panel distribution-toolbar"><label><span>Buscar bloque</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Código, rango o nota…" /></label><label><span>Estado</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'Todos' | BingoBlock['status'])}><option>Todos</option><option>Listo</option><option>Descargado</option><option>Entregado</option></select></label><label><span>Distribuidor</span><select value={distributorFilter} onChange={event => setDistributorFilter(event.target.value)}><option>Todos</option>{distributors.map(distributor => <option key={distributor}>{distributor}</option>)}<option>Sin asignar</option></select></label><div className="filter-result"><b>{visibleBlocks.length}</b><span>de {blocks.length} bloques</span></div></section><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">INVENTARIO DE DISTRIBUCIÓN</div><h3>Todos los bloques</h3></div><span className="preview-tag">{blocks.length ? 'GENERACIÓN LOCAL' : 'SIN LOTES'}</span></div>{visibleBlocks.length ? <div className="table-wrap"><table><thead><tr><th>Bloque</th><th>Rango de hojas</th><th>Contenido</th><th>Creado</th><th>Distribuidor</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{visibleBlocks.map(block => <tr key={block.code}><td><b className="code-cell">{block.code}</b></td><td>{block.range}</td><td>{block.pages} hojas <span className="muted-inline">· {block.pages * 4} cartones</span></td><td>{new Date(block.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{block.distributor ?? 'Sin asignar'}{block.deliveredAt && <small className="table-subline">{new Date(block.deliveredAt).toLocaleDateString('es-EC')}{block.notes ? ` · ${block.notes}` : ''}</small>}</td><td><span className={`status ${block.status === 'Entregado' ? 'entregado' : 'listo'}`}>{block.status}</span></td><td><div className="table-actions"><button className="icon-button" title="Descargar PDF" onClick={() => download(block)}><Icon name="download" /></button>{block.status !== 'Entregado' && <button className="ghost compact" onClick={() => setView('network')}>Transferir</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><span>▤</span><b>{blocks.length ? 'No hay coincidencias' : 'Aún tienes bloques generados'}</b><p>{blocks.length ? 'Prueba con otro código, estado o distribuidor.' : 'Genera tu primer lote para ver aquí las hojas y sus archivos.'}</p>{!blocks.length && <button className="primary" onClick={() => setView('generator')}>Crear primer lote <Icon name="arrow" /></button>}</div>}</section></div> }
 function PatternEditor({ initial, onClose, onSave }: { initial: Pattern; onClose: () => void; onSave: (pattern: Pattern) => void }) { const [draft, setDraft] = useState(initial); const toggleCell = (index: number) => setDraft(current => ({ ...current, cells: current.cells.includes(index) ? current.cells.filter(cell => cell !== index) : [...current.cells, index].sort((a, b) => a - b) })); return <div className="modal-backdrop"><section className="pattern-editor"><div className="panel-heading"><div><div className="eyebrow">EDITOR VISUAL 5 × 5</div><h3>{initial.id ? 'Editar patrón' : 'Crear patrón'}</h3><p>Selecciona las casillas que deben completarse.</p></div><button className="icon-button" onClick={onClose}>×</button></div><div className="editor-layout"><div className="editor-grid">{Array.from({ length: 25 }, (_, index) => <button className={draft.cells.includes(index) ? 'selected' : ''} key={index} onClick={() => toggleCell(index)}>{index === 12 ? '★' : ''}</button>)}</div><div className="editor-fields"><label>Nombre<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label><label>Grupo<select value={draft.group} onChange={event => setDraft({ ...draft, group: event.target.value })}><option>Clásicos</option><option>Letras</option><option>Números</option><option>Especiales</option><option>Personalizados</option></select></label><label>Color<input type="color" value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label><label>Descripción<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label><div className="editor-actions"><button className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={!draft.name.trim() || draft.cells.length === 0} onClick={() => onSave({ ...draft, id: draft.id || `${draft.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}` })}>Guardar patrón</button></div></div></div></section></div> }
 function Patterns() {
   const [patterns, setPatterns] = useState<Pattern[]>(readPatternCatalog)
@@ -509,11 +510,10 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks }: { sele
 
 function Integration({ blocks, onImport }: { blocks: BingoBlock[]; onImport: (blocks: BingoBlock[]) => void }) { const [message, setMessage] = useState(''); const [error, setError] = useState(''); const exportJson = () => triggerDownload(new Blob([blocksToProMaxJson(blocks)], { type: 'application/json' }), 'bingo-promax-package-v1-1.json'); const exportCsv = () => triggerDownload(new Blob([blocksToProMaxCsv(blocks)], { type: 'text/csv;charset=utf-8' }), 'bingo-promax-package-v1-1.csv'); const importFile = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const imported = parseProMaxPackage(String(reader.result)); onImport(imported); setError(''); setMessage(`${imported.length} bloques importados y listos para usar.`) } catch (importError) { setMessage(''); setError(importError instanceof Error ? importError.message : 'No se pudo importar el paquete.') } }; reader.readAsText(file); event.target.value = '' }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">PUENTE DE DATOS</div><h1>Conecta con ProMax.</h1><p className="muted">Intercambia cartones y bloques con Bingo Control ProMax usando un formato versionado.</p></div><div className="secure-badge"><Icon name="check" /> Esquema de intercambio v1.1</div></div><div className="integration-status"><div className="status-orb">↔</div><div><b>Intercambio seguro por paquete</b><p>Exporta desde Studio e importa el paquete en Bingo Control ProMax. El inventario y la auditoría se sincronizan con la nube cuando Supabase está configurado; el paquete v1.1 sigue siendo el puente controlado hacia ProMax.</p></div><span className="status listo">Preparado</span></div><div className="integration-grid"><section className="panel integration-panel"><div className="eyebrow">EXPORTAR A PROMAX</div><h3>Paquete de cartones</h3><p>Incluye campañas, bloques, hojas, códigos y cartones con el formato real de ProMax.</p><div className="export-actions"><button className="primary" onClick={exportJson} disabled={!blocks.length}><Icon name="download" /> Exportar JSON</button><button className="ghost" onClick={exportCsv} disabled={!blocks.length}><Icon name="download" /> Exportar CSV</button></div><small className="helper">{blocks.length ? `${blocks.length} bloques · ${blocks.reduce((sum, block) => sum + block.pages, 0)} hojas · ${blocks.reduce((sum, block) => sum + block.pages * 4, 0)} cartones` : 'Genera un lote para habilitar la exportación.'}</small></section><section className="panel integration-panel"><div className="eyebrow">IMPORTAR DESDE PROMAX</div><h3>Recibir un paquete</h3><p>Importa un JSON v1.0 o v1.1 generado por Bingo ProMax Studio.</p><label className="file-drop"><input type="file" accept="application/json,.json" onChange={importFile} /><span>＋ Seleccionar paquete JSON</span><small>El archivo se valida antes de incorporarse al inventario local.</small></label>{message && <div className="success-box">✓ {message}</div>}{error && <div className="error-box">{error}</div>}</section></div><section className="panel contract-panel"><div className="panel-heading"><div><div className="eyebrow">CONTRATO DE DATOS</div><h3>Formato compatible con Bingo Control ProMax</h3><p>Los nombres siguen las interfaces y acciones de su API de estado.</p></div><span className="preview-tag">v1.1</span></div><div className="contract-table"><div><code>game</code><span>Partida lista para importar</span></div><div><code>cards[].number</code><span>Numeración del cartón</span></div><div><code>cards[].grid</code><span>Matriz plana de 25 valores; 0 representa centro libre</span></div><div><code>cards[].layout</code><span>Diseño classic-5x5 con filas, columnas y celdas</span></div><div><code>cards[].sourcePage</code><span>Página original dentro de la hoja PDF</span></div><div><code>blocks[].code</code><span>Código único del bloque de 40 hojas</span></div></div></section><section className="api-roadmap"><span>API futura</span><b>POST /api/integration/promax/import</b><b>GET /api/integration/promax/blocks/:code</b><b>POST /api/integration/promax/games</b></section></div> }
 
-function Users({ currentMember }: { currentMember: StudioMember | null }) {
+function Users({ currentMember, onTenantCreated }: { currentMember: StudioMember | null; onTenantCreated: (tenantId: string) => void }) {
   const [members, setMembers] = useState<StudioMember[]>([])
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<StudioMember['role']>('operator')
-  const [permissions, setPermissions] = useState<Record<string, boolean>>({ dashboard: true, blocks: true, games: true })
+  const [role] = useState<StudioMember['role']>('admin')
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -524,12 +524,58 @@ function Users({ currentMember }: { currentMember: StudioMember | null }) {
     const normalized = email.trim().toLowerCase()
     if (!normalized.includes('@')) { setError('Escribe un correo válido.'); return }
     setBusy(true); setError('')
-    const member: StudioMember = { email: normalized, role, active: true, permissions: role === 'operator' ? permissions : {} }
-    try { await saveStudioMember(member); setMembers(current => current.some(item => item.email === normalized) ? current.map(item => item.email === normalized ? member : item) : [...current, member]); appendAudit('ALTA_USUARIO', `${normalized} agregado como ${role}`); setOpen(false); setEmail('') } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo guardar el usuario. Ejecuta la migración de Supabase primero.') } finally { setBusy(false) }
+    try { const created = await createStudioAdmin(normalized, normalized, 'Operación ' + normalized); const member: StudioMember = { email: normalized, role: 'admin', active: true, permissions: {}, tenantId: created.tenant_id, displayName: created.name }; setMembers(current => [...current, member]); onTenantCreated(created.tenant_id); appendAudit('ALTA_ADMINISTRADOR', `${normalized} agregado como administrador`); setOpen(false); setEmail('') } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo crear el administrador. Ejecuta la migración de Supabase primero.') } finally { setBusy(false) }
   }
-  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">Los desarrolladores controlan administradores y operadores con permisos separados.</p></div><button className="primary" disabled={!canManage} onClick={() => { setError(''); setPermissions({ dashboard: true, blocks: true, games: true }); setOpen(true) }}><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las dos cuentas iniciales tienen rol desarrollador.</p></div><span className="preview-tag">{members.length} CUENTAS</span></div><div className="user-list">{members.map(member => <UserRow key={member.email} member={member} />)}</div></section>{open && <div className="modal-backdrop"><section className="modal small-modal"><header><div><span className="eyebrow">NUEVO ACCESO</span><h2>Agregar usuario</h2></div><button className="icon-button" onClick={() => setOpen(false)} type="button">×</button></header><div className="form-stack"><label>Correo<input autoFocus type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="operador@dominio.com" /></label><label>Rol<select value={role} onChange={event => setRole(event.target.value as StudioMember['role'])}><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>{role === 'operator' && <div className="permission-picker"><span className="eyebrow">MÓDULOS PERMITIDOS</span>{permissionOptions.map(option => <label key={option.id}><input type="checkbox" checked={permissions[option.id] === true} onChange={event => setPermissions(current => ({ ...current, [option.id]: event.target.checked }))} />{option.label}</label>)}</div>}{error && <div className="error-box">{error}</div>}</div><footer><button className="ghost" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()} type="button">{busy ? 'Guardando…' : 'Guardar acceso'}</button></footer></section></div>}</div>
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Administradores autorizados.</h1><p className="muted">Solo las cuentas desarrolladoras pueden crear nuevos administradores. Cada administrador recibe su propio espacio aislado.</p></div><button className="primary" disabled={!canManage} onClick={() => { setError(''); setOpen(true) }}><Icon name="plus" /> Crear administrador</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las dos cuentas iniciales mantienen el rol desarrollador.</p></div><span className="preview-tag">{members.length} CUENTAS</span></div><div className="user-list">{members.map(member => <UserRow key={member.email} member={member} />)}</div></section>{open && <div className="modal-backdrop"><section className="modal small-modal"><header><div><span className="eyebrow">NUEVO ADMINISTRADOR</span><h2>Crear espacio</h2></div><button className="icon-button" onClick={() => setOpen(false)} type="button">×</button></header><div className="form-stack"><label>Correo del administrador<input autoFocus type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="admin@dominio.com" /></label><div className="success-box">Se creará automáticamente un espacio independiente para sus cartones, bloques y red comercial.</div>{error && <div className="error-box">{error}</div>}</div><footer><button className="ghost" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()} type="button">{busy ? 'Creando…' : 'Crear administrador'}</button></footer></section></div>}</div>
 }
-function UserRow({ member }: { member: StudioMember }) { return <div className="user-row"><div className="avatar">{member.email.slice(0, 2).toUpperCase()}</div><div><b>{member.email}</b><span>{member.role === 'developer' ? 'Desarrollador' : member.role === 'admin' ? 'Administrador' : 'Operador'}</span></div><span className={`status ${member.active ? 'listo' : 'entregado'}`}>{member.active ? 'Activo' : 'Inactivo'}</span><button className="icon-button" disabled title="Los cambios se administran desde la siguiente versión de permisos">⋯</button></div> }
+function UserRow({ member }: { member: StudioMember }) { const label = member.role === 'developer' ? 'Desarrollador' : member.role === 'admin' ? 'Administrador' : member.role === 'distributor' ? 'Distribuidor' : member.role === 'seller' ? 'Vendedor' : 'Operador'; return <div className="user-row"><div className="avatar">{member.email.slice(0, 2).toUpperCase()}</div><div><b>{member.displayName || member.email}</b><span>{label} · {member.email}</span></div><span className={`status ${member.active ? 'listo' : 'entregado'}`}>{member.active ? 'Activo' : 'Inactivo'}</span><button className="icon-button" disabled title="Los cambios se administran desde la siguiente versión de permisos">⋯</button></div> }
+
+function Network({ tenantId, member, blocks, onTransferred }: { tenantId?: string; member: StudioMember | null; blocks: BingoBlock[]; onTransferred: (code: string, patch: Partial<BingoBlock>) => void }) {
+  const [distributors, setDistributors] = useState<StudioParty[]>([])
+  const [sellers, setSellers] = useState<StudioParty[]>([])
+  const [transfers, setTransfers] = useState<StudioTransfer[]>([])
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [distributorId, setDistributorId] = useState('')
+  const [blockCode, setBlockCode] = useState('')
+  const [destinationId, setDestinationId] = useState('')
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const isManager = member?.role === 'developer' || member?.role === 'admin'
+  const destinationType: 'distributor' | 'seller' = isManager ? 'distributor' : 'seller'
+  const destinations = destinationType === 'distributor' ? distributors : sellers.filter((seller) => member?.role !== 'distributor' || seller.distributorId === member.partyId)
+  const refresh = async () => {
+    if (!tenantId) return
+    try {
+      const network = await loadStudioNetwork(tenantId)
+      setDistributors(network.distributors); setSellers(network.sellers); setTransfers(network.transfers)
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo cargar la red comercial.') }
+  }
+  useEffect(() => { void refresh() }, [tenantId])
+  const createParty = async (type: 'distributor' | 'seller') => {
+    if (!tenantId || !name.trim() || !email.trim() || (type === 'seller' && !distributorId)) { setError(type === 'seller' ? 'Completa nombre, correo y distribuidor.' : 'Completa nombre y correo.'); return }
+    setBusy(true); setError(''); setMessage('')
+    try {
+      await createStudioPartyAccount(type, name, email, phone, type === 'seller' ? distributorId : undefined, tenantId)
+      const createdEmail = email.trim().toLowerCase()
+      setName(''); setEmail(''); setPhone(''); setDistributorId(''); setMessage((type === 'seller' ? 'Vendedor' : 'Distribuidor') + ' creado. Ya puede acceder con enlace seguro.'); await refresh(); appendAudit('ALTA_RED_COMERCIAL', type + ' ' + createdEmail + ' creado')
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo crear la cuenta.') } finally { setBusy(false) }
+  }
+  const transfer = async () => {
+    const block = blocks.find((item) => item.code === blockCode)
+    const destination = destinations.find((item) => item.id === destinationId)
+    if (!block || !destination) { setError('Selecciona un bloque y un destinatario válido.'); return }
+    setBusy(true); setError(''); setMessage('')
+    try {
+      await transferStudioBlock(block.code, destinationType, destination.id)
+      onTransferred(block.code, { status: 'Entregado', distributor: destinationType === 'distributor' ? destination.name : block.distributor, deliveredAt: new Date().toISOString(), holderType: destinationType, holderId: destination.id, holderName: destination.name })
+      setMessage('Bloque ' + block.code + ' transferido a ' + destination.name + '.'); setBlockCode(''); setDestinationId(''); await refresh(); appendAudit('TRANSFERENCIA_BLOQUE', block.code + ' → ' + destination.name)
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo registrar la transferencia.') } finally { setBusy(false) }
+  }
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">RED COMERCIAL</div><h1>La distribución, trazable.</h1><p className="muted">Cada administrador mantiene sus propios distribuidores, vendedores y bloques. Las entregas quedan registradas.</p></div><div className="secure-badge"><Icon name="lock" /> Espacio aislado</div></div>{(error || message) && <div className={error ? 'error-box' : 'success-box'}>{error || message}</div>}<div className="content-grid"><section className="panel form-panel"><div className="eyebrow">NUEVA CUENTA COMERCIAL</div><h3>{isManager ? 'Crear distribuidor o vendedor' : 'Transferir bloques recibidos'}</h3>{isManager ? <div className="form-stack"><label>Nombre<input value={name} onChange={event => setName(event.target.value)} placeholder="Distribución Central" /></label><label>Correo de acceso<input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="contacto@dominio.com" /></label><label>Teléfono<input value={phone} onChange={event => setPhone(event.target.value)} placeholder="Opcional" /></label><div className="two-fields"><button className="primary" disabled={busy} onClick={() => void createParty('distributor')}><Icon name="plus" /> Distribuidor</button><button className="ghost" disabled={busy || !distributorId} onClick={() => void createParty('seller')}><Icon name="plus" /> Vendedor</button></div><label>Distribuidor del vendedor<select value={distributorId} onChange={event => setDistributorId(event.target.value)}><option value="">Seleccionar…</option>{distributors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><small className="helper">Los nuevos accesos reciben un enlace de un solo uso. El administrador conserva el control del espacio.</small></div> : <div className="form-stack"><label>Bloque recibido<select value={blockCode} onChange={event => setBlockCode(event.target.value)}><option value="">Seleccionar…</option>{blocks.filter(block => block.holderId === member?.partyId || (member?.role === 'distributor' && block.distributor === member?.displayName)).map(block => <option key={block.code} value={block.code}>{block.code} · {block.pages} hojas</option>)}</select></label><label>Vendedor destino<select value={destinationId} onChange={event => setDestinationId(event.target.value)}><option value="">Seleccionar…</option>{destinations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="primary wide" disabled={busy} onClick={() => void transfer()}><Icon name="arrow" /> Transferir a vendedor</button><small className="helper">La transferencia solo puede hacerla el distribuidor que posee el bloque.</small></div>}</section><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">CUENTAS DEL ESPACIO</div><h3>Distribuidores y vendedores</h3></div><span className="preview-tag">{distributors.length + sellers.length} CUENTAS</span></div><div className="user-list">{distributors.map(item => <div className="user-row" key={item.id}><div className="avatar">D</div><div><b>{item.name}</b><span>Distribuidor · {item.email}</span></div><span className="status listo">Activo</span></div>)}{sellers.map(item => <div className="user-row" key={item.id}><div className="avatar">V</div><div><b>{item.name}</b><span>Vendedor · {item.email}</span></div><span className="status listo">Activo</span></div>)}{!distributors.length && !sellers.length && <div className="empty-state"><b>Aún no hay cuentas comerciales</b><p>Crea el primer distribuidor de este administrador.</p></div>}</div></section></div><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">HISTORIAL</div><h3>Transferencias entre distribuidor y vendedor</h3></div><span className="preview-tag">{transfers.length} MOVIMIENTOS</span></div>{transfers.length ? <div className="audit-list">{transfers.slice(0, 50).map(item => <AuditRow key={item.id} icon="arrow" color="#6ee7d1" title={item.blockCode + ' · ' + item.fromName + ' → ' + item.toName} actor={item.transferredBy} time={new Date(item.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />)}</div> : <div className="empty-state"><b>Sin transferencias todavía</b><p>El historial aparecerá aquí después de entregar el primer bloque.</p></div>}</section></div>
+}
 
 function Audit() {
   const [events, setEvents] = useState<AuditEvent[]>(() => {
@@ -550,9 +596,11 @@ function AuditRow({ icon, color, title, actor, time }: { icon: string; color: st
 function App() {
   const [email, setEmail] = useState<string | null>(null)
   const [currentMember, setCurrentMember] = useState<StudioMember | null>(null)
+  const [tenants, setTenants] = useState<StudioTenant[]>([])
+  const [activeTenantId, setActiveTenantId] = useState<string | undefined>()
   const [authReady, setAuthReady] = useState(false)
   const [view, setView] = useState<View>('dashboard')
-  const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } })
+  const [blocks, setBlocks] = useState<BingoBlock[]>([])
   const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a'])
 
   useEffect(() => {
@@ -588,27 +636,43 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!currentMember) return
     let active = true
-    void loadPersistedBlocks().then((stored) => {
+    void loadStudioTenants().then((available) => {
+      if (!active) return
+      setTenants(available)
+      const saved = localStorage.getItem('bps-active-tenant') ?? undefined
+      const next = currentMember.tenantId ?? (saved && available.some((tenant) => tenant.id === saved) ? saved : available[0]?.id)
+      setActiveTenantId(next)
+      if (next) localStorage.setItem('bps-active-tenant', next)
+    }).catch(() => { if (active && currentMember.tenantId) setActiveTenantId(currentMember.tenantId) })
+    return () => { active = false }
+  }, [currentMember])
+
+  useEffect(() => {
+    let active = true
+    if (!email) return () => { active = false }
+    void loadPersistedBlocks(activeTenantId).then((stored) => {
       if (!active || !stored.length) return
       setBlocks((current) => current.length ? current : stored)
     })
     return () => { active = false }
-  }, [])
+  }, [email, activeTenantId])
 
   useEffect(() => {
     if (currentMember && !canAccessView(currentMember, view)) setView('dashboard')
   }, [currentMember, view])
 
   if (!authReady) return <main className="login-shell"><section className="login-card"><Logo /><p className="muted">Verificando la sesión segura…</p></section></main>
-  if (!email) return <Login onLogin={async (value) => { const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
+  if (!email) return <Login onLogin={async (value) => { const invited = ALLOWED_EMAILS.includes(value) ? true : (await supabase.rpc('studio_login_allowed', { p_email: value })).data === true; if (!invited) throw new Error('Esta cuenta no ha sido creada por un desarrollador.'); const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: true, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
 
   const logout = async () => { await supabase.auth.signOut(); localStorage.removeItem('bps-email'); setEmail(null) }
-  const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); if (update === 'complete') void persistBlocks(merged); return merged }) }
-  const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
-  const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false); if (updated) void syncStudioBlock(updated).catch(() => { /* Offline delivery remains local. */ }); return next }) }
-  const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users currentMember={currentMember} />, audit: <Audit /> }[view]
-  return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} member={currentMember} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
+  const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); if (update === 'complete') void persistBlocks(merged, true, activeTenantId); return merged }) }
+  const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged, true, activeTenantId); return merged }) }
+  const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false, activeTenantId); if (updated) void syncStudioBlock(updated, activeTenantId).catch(() => { /* Offline delivery remains local. */ }); return next }) }
+  const onTenantChange = (tenantId: string) => { setActiveTenantId(tenantId); localStorage.setItem('bps-active-tenant', tenantId); setBlocks([]); setView('dashboard') }
+  const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} tenantId={activeTenantId} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, network: <Network tenantId={activeTenantId} member={currentMember} blocks={blocks} onTransferred={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users currentMember={currentMember} onTenantCreated={(tenantId) => { void loadStudioTenants().then(setTenants); onTenantChange(tenantId) }} />, audit: <Audit /> }[view]
+  return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} member={currentMember} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} tenants={tenants} activeTenantId={activeTenantId} onTenantChange={onTenantChange} />{content}</main></div>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

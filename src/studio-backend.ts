@@ -14,7 +14,15 @@ type StudioBlockRow = {
   notes: string
   payload: unknown
   created_by?: string | null
+  tenant_id?: string | null
+  holder_type?: 'admin' | 'distributor' | 'seller' | null
+  holder_id?: string | null
+  holder_name?: string | null
 }
+
+export type StudioTenant = { id: string; name: string; slug: string; ownerEmail: string; active: boolean }
+export type StudioParty = { id: string; type: 'distributor' | 'seller'; name: string; email: string; phone: string; distributorId?: string; active: boolean }
+export type StudioTransfer = { id: string; blockCode: string; fromType: string; fromName: string; toType: string; toName: string; notes: string; transferredBy: string; createdAt: string }
 
 export type StudioGame = {
   id: string
@@ -40,9 +48,13 @@ export type StudioPattern = {
 
 export type StudioMember = {
   email: string
-  role: 'developer' | 'admin' | 'operator'
+  role: 'developer' | 'admin' | 'operator' | 'distributor' | 'seller'
   active: boolean
   permissions: Record<string, boolean>
+  tenantId?: string
+  partyId?: string
+  partyType?: 'distributor' | 'seller'
+  displayName?: string
 }
 
 export type StudioAuditEvent = {
@@ -76,7 +88,7 @@ async function currentUserId() {
   return data.user.id
 }
 
-function blockRow(block: BingoBlock, userId: string): StudioBlockRow {
+function blockRow(block: BingoBlock, userId: string, tenantId?: string | null): StudioBlockRow {
   return {
     code: block.code,
     campaign_code: block.campaign,
@@ -88,63 +100,74 @@ function blockRow(block: BingoBlock, userId: string): StudioBlockRow {
     notes: block.notes ?? '',
     payload: block,
     created_by: userId,
+    tenant_id: tenantId ?? undefined,
   }
 }
 
-export async function loadStudioBlocks(): Promise<BingoBlock[]> {
+export async function loadStudioBlocks(tenantId?: string | null): Promise<BingoBlock[]> {
   const userId = await currentUserId()
   if (!userId) return []
-  const { data, error } = await supabase
+  let query = supabase
     .from('studio_blocks')
-    .select('code,campaign_code,range_text,pages,status,distributor,delivered_at,notes,payload,created_by')
+    .select('code,campaign_code,range_text,pages,status,distributor,delivered_at,notes,payload,created_by,holder_type,holder_id,holder_name')
     .order('created_at', { ascending: true })
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { data, error } = await query
   if (error) throw error
-  return (data as StudioBlockRow[] | null ?? []).map((row) => asBlock(row.payload)).filter((block): block is BingoBlock => Boolean(block))
+  const mapped: Array<BingoBlock | null> = (data as StudioBlockRow[] | null ?? []).map((row) => {
+    const block = asBlock(row.payload)
+    if (!block) return null
+    return { ...block, status: row.status, distributor: row.distributor ?? undefined, deliveredAt: row.delivered_at ?? undefined, notes: row.notes, holderType: row.holder_type ?? undefined, holderId: row.holder_id ?? undefined, holderName: row.holder_name ?? undefined }
+  })
+  return mapped.filter((block): block is BingoBlock => Boolean(block))
 }
 
-export async function syncStudioInventory(blocks: BingoBlock[]) {
+export async function syncStudioInventory(blocks: BingoBlock[], tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId || !blocks.length) return
   const campaigns = Array.from(new Map(blocks.map((block) => [block.campaign, block])).values()).map((block) => ({
     code: block.campaign,
     name: block.campaign,
     created_by: userId,
+    tenant_id: tenantId ?? undefined,
     updated_at: new Date().toISOString(),
   }))
   const campaignResult = await supabase.from('studio_campaigns').upsert(campaigns, { onConflict: 'code' })
   if (campaignResult.error) throw campaignResult.error
   for (let offset = 0; offset < blocks.length; offset += SYNC_CHUNK_SIZE) {
-    const rows = blocks.slice(offset, offset + SYNC_CHUNK_SIZE).map((block) => blockRow(block, userId))
+    const rows = blocks.slice(offset, offset + SYNC_CHUNK_SIZE).map((block) => blockRow(block, userId, tenantId))
     const result = await supabase.from('studio_blocks').upsert(rows, { onConflict: 'code' })
     if (result.error) throw result.error
   }
 }
 
-export async function syncStudioBlock(block: BingoBlock) {
+export async function syncStudioBlock(block: BingoBlock, tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId) return
   const campaignResult = await supabase.from('studio_campaigns').upsert({
     code: block.campaign,
     name: block.campaign,
     created_by: userId,
+    tenant_id: tenantId ?? undefined,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'code' })
   if (campaignResult.error) throw campaignResult.error
-  const result = await supabase.from('studio_blocks').upsert(blockRow(block, userId), { onConflict: 'code' })
+  const result = await supabase.from('studio_blocks').upsert(blockRow(block, userId, tenantId), { onConflict: 'code' })
   if (result.error) throw result.error
 }
 
-export async function loadStudioGenerationCheckpoint(): Promise<StudioGenerationCheckpoint | null> {
+export async function loadStudioGenerationCheckpoint(tenantId?: string | null): Promise<StudioGenerationCheckpoint | null> {
   const userId = await currentUserId()
   if (!userId) return null
-  const { data, error } = await supabase
+  let query = supabase
     .from('studio_generation_jobs')
     .select('campaign_code,total_sheets,completed_sheets,next_page,next_block_number,status,updated_at')
     .eq('created_by', userId)
     .eq('status', 'active')
     .order('updated_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { data, error } = await query.maybeSingle()
   if (error) throw error
   if (!data) return null
   return {
@@ -158,7 +181,7 @@ export async function loadStudioGenerationCheckpoint(): Promise<StudioGeneration
   }
 }
 
-export async function saveStudioGenerationCheckpoint(checkpoint: StudioGenerationCheckpoint) {
+export async function saveStudioGenerationCheckpoint(checkpoint: StudioGenerationCheckpoint, tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId) return
   const result = await supabase.from('studio_generation_jobs').upsert({
@@ -170,29 +193,36 @@ export async function saveStudioGenerationCheckpoint(checkpoint: StudioGeneratio
     status: 'active',
     created_by: userId,
     updated_at: checkpoint.updatedAt,
+    tenant_id: tenantId ?? undefined,
   }, { onConflict: 'campaign_code,created_by' })
   if (result.error) throw result.error
 }
 
-export async function clearStudioGenerationCheckpoint(campaign: string) {
+export async function clearStudioGenerationCheckpoint(campaign: string, tenantId?: string | null) {
   const userId = await currentUserId()
   if (!userId) return
-  const result = await supabase
+  let query = supabase
     .from('studio_generation_jobs')
     .update({ status: 'completed', updated_at: new Date().toISOString() })
     .eq('campaign_code', campaign)
     .eq('created_by', userId)
     .eq('status', 'active')
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const result = await query
   if (result.error) throw result.error
 }
 
 export async function writeStudioAudit(action: string, detail: string) {
   const user = await supabase.auth.getUser()
   if (user.error || !user.data.user?.email) return
+  const actorEmail = user.data.user.email.toLowerCase()
+  const memberResult = await supabase.from('studio_members').select('tenant_id').eq('email', actorEmail).maybeSingle()
+  if (memberResult.error) throw memberResult.error
   const result = await supabase.from('studio_audit_events').insert({
     action,
     detail,
-    actor_email: user.data.user.email.toLowerCase(),
+    actor_email: actorEmail,
+    tenant_id: (memberResult.data as { tenant_id?: string | null } | null)?.tenant_id ?? null,
   })
   if (result.error) throw result.error
 }
@@ -326,17 +356,26 @@ export async function syncStudioPatterns(patterns: StudioPattern[]) {
 function mapMember(row: Record<string, unknown>): StudioMember | null {
   const email = String(row.email ?? '').trim().toLowerCase()
   const role = String(row.role ?? '')
-  if (!email || !['developer', 'admin', 'operator'].includes(role)) return null
+  if (!email || !['developer', 'admin', 'operator', 'distributor', 'seller'].includes(role)) return null
   const permissions = row.permissions && typeof row.permissions === 'object' && !Array.isArray(row.permissions)
     ? Object.fromEntries(Object.entries(row.permissions as Record<string, unknown>).map(([key, value]) => [key, value === true]))
     : {}
-  return { email, role: role as StudioMember['role'], active: row.active !== false, permissions }
+  return {
+    email,
+    role: role as StudioMember['role'],
+    active: row.active !== false,
+    permissions,
+    tenantId: typeof row.tenant_id === 'string' ? row.tenant_id : undefined,
+    partyId: typeof row.party_id === 'string' ? row.party_id : undefined,
+    partyType: row.party_type === 'distributor' || row.party_type === 'seller' ? row.party_type : undefined,
+    displayName: typeof row.display_name === 'string' ? row.display_name : undefined,
+  }
 }
 
 export async function loadStudioMember(email: string): Promise<StudioMember | null> {
   const { data, error } = await supabase
     .from('studio_members')
-    .select('email,role,active,permissions')
+    .select('email,role,active,permissions,tenant_id,party_id,party_type,display_name')
     .eq('email', email.trim().toLowerCase())
     .maybeSingle()
   if (error) throw error
@@ -348,7 +387,7 @@ export async function loadStudioMembers(): Promise<StudioMember[]> {
   if (!userId) return []
   const { data, error } = await supabase
     .from('studio_members')
-    .select('email,role,active,permissions')
+    .select('email,role,active,permissions,tenant_id,party_id,party_type,display_name')
     .order('email', { ascending: true })
   if (error) throw error
   return (data as Array<Record<string, unknown>> | null ?? []).map(mapMember).filter((member): member is StudioMember => Boolean(member))
@@ -362,7 +401,63 @@ export async function saveStudioMember(member: StudioMember) {
     role: member.role,
     active: member.active,
     permissions: member.permissions,
+    tenant_id: member.tenantId ?? null,
+    party_id: member.partyId ?? null,
+    party_type: member.partyType ?? null,
+    display_name: member.displayName ?? '',
     updated_at: new Date().toISOString(),
   }, { onConflict: 'email' })
   if (result.error) throw result.error
+}
+
+function mapTenant(row: Record<string, unknown>): StudioTenant {
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? 'Operación'),
+    slug: String(row.slug ?? ''),
+    ownerEmail: String(row.owner_email ?? ''),
+    active: row.active !== false,
+  }
+}
+
+export async function loadStudioTenants(): Promise<StudioTenant[]> {
+  const userId = await currentUserId()
+  if (!userId) return []
+  const { data, error } = await supabase.from('studio_tenants').select('id,name,slug,owner_email,active').eq('active', true).order('name')
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> | null ?? []).map(mapTenant).filter((tenant) => tenant.id)
+}
+
+export async function createStudioAdmin(email: string, name: string, tenantName: string) {
+  const { data, error } = await supabase.rpc('studio_create_admin', { p_email: email, p_name: name, p_tenant_name: tenantName })
+  if (error) throw error
+  return data as { tenant_id: string; email: string; role: 'admin'; name: string }
+}
+
+export async function createStudioPartyAccount(type: 'distributor' | 'seller', name: string, email: string, phone: string, distributorId?: string, tenantId?: string) {
+  const { data, error } = await supabase.rpc('studio_create_party_account', { p_type: type, p_name: name, p_email: email, p_phone: phone, p_distributor_id: distributorId ?? null, p_tenant_id: tenantId ?? null })
+  if (error) throw error
+  return data as { id: string; email: string; type: 'distributor' | 'seller'; name: string }
+}
+
+export async function loadStudioNetwork(tenantId: string) {
+  const [distributorsResult, sellersResult, transfersResult] = await Promise.all([
+    supabase.from('studio_distributors').select('id,name,email,phone,active').eq('tenant_id', tenantId).eq('active', true).order('name'),
+    supabase.from('studio_sellers').select('id,distributor_id,name,email,phone,active').eq('tenant_id', tenantId).eq('active', true).order('name'),
+    supabase.from('studio_block_transfers').select('id,block_code,from_type,from_name,to_type,to_name,notes,transferred_by,created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(300),
+  ])
+  if (distributorsResult.error) throw distributorsResult.error
+  if (sellersResult.error) throw sellersResult.error
+  if (transfersResult.error) throw transfersResult.error
+  return {
+    distributors: (distributorsResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), type: 'distributor' as const, name: String(row.name), email: String(row.email), phone: String(row.phone ?? ''), active: row.active !== false })),
+    sellers: (sellersResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), type: 'seller' as const, name: String(row.name), email: String(row.email), phone: String(row.phone ?? ''), distributorId: String(row.distributor_id), active: row.active !== false })),
+    transfers: (transfersResult.data as Array<Record<string, unknown>> ?? []).map((row) => ({ id: String(row.id), blockCode: String(row.block_code), fromType: String(row.from_type), fromName: String(row.from_name ?? ''), toType: String(row.to_type), toName: String(row.to_name ?? ''), notes: String(row.notes ?? ''), transferredBy: String(row.transferred_by ?? ''), createdAt: String(row.created_at) })),
+  }
+}
+
+export async function transferStudioBlock(blockCode: string, toType: 'distributor' | 'seller', toId: string, notes = '') {
+  const { data, error } = await supabase.rpc('studio_transfer_block', { p_block_code: blockCode, p_to_type: toType, p_to_id: toId, p_notes: notes })
+  if (error) throw error
+  return data as { block_code: string; to_type: string; to_id: string; to_name: string }
 }

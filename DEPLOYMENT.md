@@ -23,6 +23,17 @@ remotos, triggers de `updated_at`, índices y validaciones de integridad:
 supabase/002_backend_hardening.sql
 ```
 
+Finalmente ejecuta la migración de operación multiadministrador:
+
+```text
+supabase/003_multi_tenant_distribution.sql
+```
+
+Esta tercera migración crea un espacio aislado por administrador, cuentas de
+distribuidor y vendedor, titularidad de cada bloque, transferencias auditables
+y el flujo protegido administrador → distribuidor → vendedor. Solo los dos
+desarrolladores iniciales pueden crear administradores.
+
 La migración crea inventario de bloques, partidas, patrones, auditoría, miembros y RLS. Las cuentas iniciales son:
 
 - `byvera198@gmail.com`
@@ -42,9 +53,11 @@ Después valida manualmente:
 2. Generar 100 hojas, descargar un PDF y un ZIP.
 3. Confirmar 4 cartones por hoja, centro libre y numeración consecutiva.
 4. Marcar un bloque como entregado y verificar que aparezca en auditoría.
-5. Crear un operador y confirmar que solo vea los módulos seleccionados.
-6. Crear una partida, seleccionar patrones, registrar bolillas y confirmar el ganador.
-7. Exportar JSON v1.1 e importarlo en Bingo Control ProMax con una cuenta desarrolladora.
+5. Crear un administrador y confirmar que reciba su espacio independiente.
+6. Crear un distribuidor y un vendedor dentro de ese espacio.
+7. Transferir un bloque al distribuidor y después al vendedor; revisar el historial.
+8. Crear una partida, seleccionar patrones, registrar bolillas y confirmar el ganador.
+9. Exportar JSON v1.1 e importarlo en Bingo Control ProMax con una cuenta desarrolladora.
 
 ## 4. Publicación
 

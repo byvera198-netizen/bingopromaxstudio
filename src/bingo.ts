@@ -28,6 +28,9 @@ export type BingoBlock = {
   distributor?: string
   deliveredAt?: string
   notes?: string
+  holderType?: 'admin' | 'distributor' | 'seller'
+  holderId?: string
+  holderName?: string
 }
 
 const columnRanges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]] as const
