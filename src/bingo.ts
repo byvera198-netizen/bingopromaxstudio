@@ -25,6 +25,9 @@ export type BingoBlock = {
   status: 'Listo' | 'Descargado' | 'Entregado'
   createdAt: string
   sheets: BingoSheet[]
+  distributor?: string
+  deliveredAt?: string
+  notes?: string
 }
 
 const columnRanges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]] as const
