@@ -277,6 +277,7 @@ function Patterns() {
       const local = readPatternCatalog()
       const merged = local.map(pattern => remote.find(item => item.id === pattern.id) ?? pattern)
       remote.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      localStorage.setItem('bps-patterns', JSON.stringify(merged))
       setPatterns(merged)
     }).catch(() => { /* Local catalog remains available offline. */ })
     return () => { active = false }
