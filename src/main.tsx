@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
+import { supabase } from './supabase'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -124,17 +125,27 @@ function Icon({ name }: { name: string }) {
   return <span className="icon" aria-hidden="true">{icons[name] ?? '•'}</span>
 }
 
-function Login({ onLogin }: { onLogin: (email: string) => void }) {
+function Login({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
-  const submit = (event: FormEvent) => {
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
     const normalized = email.trim().toLowerCase()
     if (!ALLOWED_EMAILS.includes(normalized)) {
       setError('Esta cuenta todavía no está autorizada para acceder.')
       return
     }
-    onLogin(normalized)
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await onLogin(normalized)
+      setMessage('Enlace enviado. Revisa tu correo y vuelve a abrir el enlace para entrar al Studio.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo enviar el enlace de acceso.')
+    } finally { setBusy(false) }
   }
   return <main className="login-shell">
     <div className="login-glow glow-one" /><div className="login-glow glow-two" />
@@ -146,9 +157,10 @@ function Login({ onLogin }: { onLogin: (email: string) => void }) {
       <form onSubmit={submit} className="login-form">
         <label>Correo autorizado<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu-correo@dominio.com" autoFocus /></label>
         {error && <div className="error-box">{error}</div>}
-        <button className="primary wide" type="submit">Entrar al estudio <Icon name="arrow" /></button>
+        {message && <div className="success-box">{message}</div>}
+        <button className="primary wide" disabled={busy} type="submit">{busy ? 'Enviando enlace…' : 'Enviar enlace de acceso'} <Icon name={busy ? 'lock' : 'arrow'} /></button>
       </form>
-      <div className="login-note"><Icon name="lock" /> Acceso privado para el equipo de desarrollo</div>
+      <div className="login-note"><Icon name="lock" /> Acceso privado con enlace de un solo uso</div>
     </section>
   </main>
 }
@@ -272,6 +284,55 @@ function UserRow({ email, role, initials }: { email: string; role: string; initi
 function Audit() { const [events, setEvents] = useState<AuditEvent[]>(() => { try { return JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { return [] } }); const exportLog = () => { let latest = events; try { latest = JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { /* keep current events */ } setEvents(latest); triggerDownload(new Blob([JSON.stringify(latest, null, 2)], { type: 'application/json' }), 'bingo-promax-studio-auditoria.json') }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost" onClick={exportLog}><Icon name="download" /> Exportar registro</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Descargas, entregas y operaciones del estudio.</p></div><span className="preview-tag">{events.length ? `${events.length} EVENTOS` : 'SIN EVENTOS'}</span></div><div className="audit-list">{events.length ? events.slice(0, 100).map(event => <AuditRow key={event.id} icon={event.action === 'ENTREGA_BLOQUE' ? 'users' : 'download'} color={event.action === 'ENTREGA_BLOQUE' ? '#bda1ff' : '#6ee7d1'} title={event.detail} actor={event.actor} time={new Date(event.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />) : <AuditRow icon="spark" color="#f5c84b" title="El registro está listo para recibir operaciones" actor="Sistema" time="Ahora" />}</div></section></div> }
 function AuditRow({ icon, color, title, actor, time }: { icon: string; color: string; title: string; actor: string; time: string }) { return <div className="audit-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{actor}</span></div><time>{time}</time></div> }
 
-function App() { const [email, setEmail] = useState<string | null>(() => localStorage.getItem('bps-email')); const [view, setView] = useState<View>('dashboard'); const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } }); const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a']); useEffect(() => { if (!blocks.length) void loadPersistedBlocks().then((stored) => { if (stored.length) setBlocks(stored) }) }, [blocks.length]); if (!email) return <Login onLogin={(value) => { localStorage.setItem('bps-email', value); setEmail(value) }} />; const logout = () => { localStorage.removeItem('bps-email'); setEmail(null) }; const replaceBlocks = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); void persistBlocks(nextBlocks) }; const onGenerated = (nextBlocks: BingoBlock[]) => replaceBlocks(nextBlocks); const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }; const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); void persistBlocks(next); return next }) }; const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]; return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={logout} />{content}</main></div> }
+function App() {
+  const [email, setEmail] = useState<string | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [view, setView] = useState<View>('dashboard')
+  const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } })
+  const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a'])
+
+  useEffect(() => {
+    let mounted = true
+    const acceptSession = (sessionEmail: string | undefined) => {
+      const normalized = sessionEmail?.trim().toLowerCase() ?? ''
+      if (mounted && ALLOWED_EMAILS.includes(normalized)) {
+        localStorage.setItem('bps-email', normalized)
+        setEmail(normalized)
+      } else if (mounted) {
+        localStorage.removeItem('bps-email')
+        setEmail(null)
+      }
+      if (mounted) setAuthReady(true)
+    }
+    void supabase.auth.getSession().then(({ data }) => {
+      const sessionEmail = data.session?.user.email
+      if (sessionEmail && !ALLOWED_EMAILS.includes(sessionEmail.trim().toLowerCase())) void supabase.auth.signOut()
+      acceptSession(sessionEmail)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      const sessionEmail = session?.user.email
+      if (sessionEmail && !ALLOWED_EMAILS.includes(sessionEmail.trim().toLowerCase())) {
+        window.setTimeout(() => void supabase.auth.signOut(), 0)
+        acceptSession(undefined)
+        return
+      }
+      acceptSession(sessionEmail)
+    })
+    return () => { mounted = false; listener.subscription.unsubscribe() }
+  }, [])
+
+  useEffect(() => { if (!blocks.length) void loadPersistedBlocks().then((stored) => { if (stored.length) setBlocks(stored) }) }, [blocks.length])
+
+  if (!authReady) return <main className="login-shell"><section className="login-card"><Logo /><p className="muted">Verificando la sesión segura…</p></section></main>
+  if (!email) return <Login onLogin={async (value) => { const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin } }); if (error) throw error }} />
+
+  const logout = async () => { await supabase.auth.signOut(); localStorage.removeItem('bps-email'); setEmail(null) }
+  const replaceBlocks = (nextBlocks: BingoBlock[]) => { setBlocks(nextBlocks); void persistBlocks(nextBlocks) }
+  const onGenerated = (nextBlocks: BingoBlock[]) => replaceBlocks(nextBlocks)
+  const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
+  const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); void persistBlocks(next); return next }) }
+  const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]
+  return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
+}
 
 createRoot(document.getElementById('root')!).render(<App />)
