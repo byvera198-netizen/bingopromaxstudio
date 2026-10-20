@@ -38,6 +38,13 @@ export type StudioPattern = {
   active: boolean
 }
 
+export type StudioMember = {
+  email: string
+  role: 'developer' | 'admin' | 'operator'
+  active: boolean
+  permissions: Record<string, boolean>
+}
+
 function asBlock(value: unknown): BingoBlock | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const block = value as Partial<BingoBlock>
@@ -221,4 +228,48 @@ export async function syncStudioPatterns(patterns: StudioPattern[]) {
     const result = await supabase.from('studio_patterns').upsert(rows.slice(offset, offset + SYNC_CHUNK_SIZE), { onConflict: 'id' })
     if (result.error) throw result.error
   }
+}
+
+function mapMember(row: Record<string, unknown>): StudioMember | null {
+  const email = String(row.email ?? '').trim().toLowerCase()
+  const role = String(row.role ?? '')
+  if (!email || !['developer', 'admin', 'operator'].includes(role)) return null
+  const permissions = row.permissions && typeof row.permissions === 'object' && !Array.isArray(row.permissions)
+    ? Object.fromEntries(Object.entries(row.permissions as Record<string, unknown>).map(([key, value]) => [key, value === true]))
+    : {}
+  return { email, role: role as StudioMember['role'], active: row.active !== false, permissions }
+}
+
+export async function loadStudioMember(email: string): Promise<StudioMember | null> {
+  const { data, error } = await supabase
+    .from('studio_members')
+    .select('email,role,active,permissions')
+    .eq('email', email.trim().toLowerCase())
+    .maybeSingle()
+  if (error) throw error
+  return data ? mapMember(data as Record<string, unknown>) : null
+}
+
+export async function loadStudioMembers(): Promise<StudioMember[]> {
+  const userId = await currentUserId()
+  if (!userId) return []
+  const { data, error } = await supabase
+    .from('studio_members')
+    .select('email,role,active,permissions')
+    .order('email', { ascending: true })
+  if (error) throw error
+  return (data as Array<Record<string, unknown>> | null ?? []).map(mapMember).filter((member): member is StudioMember => Boolean(member))
+}
+
+export async function saveStudioMember(member: StudioMember) {
+  const userId = await currentUserId()
+  if (!userId) return
+  const result = await supabase.from('studio_members').upsert({
+    email: member.email.trim().toLowerCase(),
+    role: member.role,
+    active: member.active,
+    permissions: member.permissions,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'email' })
+  if (result.error) throw result.error
 }

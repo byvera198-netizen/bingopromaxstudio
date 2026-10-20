@@ -3,7 +3,7 @@ import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, createBlockPdf, createBlocksZip, generateBatch, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard } from './bingo'
 import { supabase } from './supabase'
-import { loadStudioBlocks, loadStudioGame, loadStudioPatterns, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame } from './studio-backend'
+import { loadStudioBlocks, loadStudioGame, loadStudioMember, loadStudioMembers, loadStudioPatterns, saveStudioMember, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, writeStudioAudit, type StudioGame, type StudioMember } from './studio-backend'
 import './styles.css'
 
 const ALLOWED_EMAILS = ['byvera198@gmail.com', 'bveraalvear@gmail.com']
@@ -364,14 +364,33 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks }: { sele
 
 function Integration({ blocks, onImport }: { blocks: BingoBlock[]; onImport: (blocks: BingoBlock[]) => void }) { const [message, setMessage] = useState(''); const [error, setError] = useState(''); const exportJson = () => triggerDownload(new Blob([blocksToProMaxJson(blocks)], { type: 'application/json' }), 'bingo-promax-package-v1-1.json'); const exportCsv = () => triggerDownload(new Blob([blocksToProMaxCsv(blocks)], { type: 'text/csv;charset=utf-8' }), 'bingo-promax-package-v1-1.csv'); const importFile = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const imported = parseProMaxPackage(String(reader.result)); onImport(imported); setError(''); setMessage(`${imported.length} bloques importados y listos para usar.`) } catch (importError) { setMessage(''); setError(importError instanceof Error ? importError.message : 'No se pudo importar el paquete.') } }; reader.readAsText(file); event.target.value = '' }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">PUENTE DE DATOS</div><h1>Conecta con ProMax.</h1><p className="muted">Intercambia cartones y bloques con Bingo Control ProMax usando un formato versionado.</p></div><div className="secure-badge"><Icon name="check" /> Esquema de intercambio v1.1</div></div><div className="integration-status"><div className="status-orb">↔</div><div><b>Modo de integración local</b><p>Exporta desde Studio e importa el paquete en Bingo Control ProMax. La API remota se conectará en la fase de backend.</p></div><span className="status listo">Preparado</span></div><div className="integration-grid"><section className="panel integration-panel"><div className="eyebrow">EXPORTAR A PROMAX</div><h3>Paquete de cartones</h3><p>Incluye campañas, bloques, hojas, códigos y cartones con el formato real de ProMax.</p><div className="export-actions"><button className="primary" onClick={exportJson} disabled={!blocks.length}><Icon name="download" /> Exportar JSON</button><button className="ghost" onClick={exportCsv} disabled={!blocks.length}><Icon name="download" /> Exportar CSV</button></div><small className="helper">{blocks.length ? `${blocks.length} bloques · ${blocks.reduce((sum, block) => sum + block.pages, 0)} hojas · ${blocks.reduce((sum, block) => sum + block.pages * 4, 0)} cartones` : 'Genera un lote para habilitar la exportación.'}</small></section><section className="panel integration-panel"><div className="eyebrow">IMPORTAR DESDE PROMAX</div><h3>Recibir un paquete</h3><p>Importa un JSON v1.0 o v1.1 generado por Bingo ProMax Studio.</p><label className="file-drop"><input type="file" accept="application/json,.json" onChange={importFile} /><span>＋ Seleccionar paquete JSON</span><small>El archivo se valida antes de incorporarse al inventario local.</small></label>{message && <div className="success-box">✓ {message}</div>}{error && <div className="error-box">{error}</div>}</section></div><section className="panel contract-panel"><div className="panel-heading"><div><div className="eyebrow">CONTRATO DE DATOS</div><h3>Formato compatible con Bingo Control ProMax</h3><p>Los nombres siguen las interfaces y acciones de su API de estado.</p></div><span className="preview-tag">v1.1</span></div><div className="contract-table"><div><code>game</code><span>Partida lista para importar</span></div><div><code>cards[].number</code><span>Numeración del cartón</span></div><div><code>cards[].grid</code><span>Matriz plana de 25 valores; 0 representa centro libre</span></div><div><code>cards[].layout</code><span>Diseño classic-5x5 con filas, columnas y celdas</span></div><div><code>cards[].sourcePage</code><span>Página original dentro de la hoja PDF</span></div><div><code>blocks[].code</code><span>Código único del bloque de 40 hojas</span></div></div></section><section className="api-roadmap"><span>API futura</span><b>POST /api/integration/promax/import</b><b>GET /api/integration/promax/blocks/:code</b><b>POST /api/integration/promax/games</b></section></div> }
 
-function Users() { return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">El acceso inicial está restringido a los desarrolladores.</p></div><button className="primary" disabled title="Disponible cuando se active el backend de cuentas"><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las nuevas cuentas podrán administrarse en la fase de seguridad y backend.</p></div></div><div className="user-list"><UserRow email="byvera198@gmail.com" role="Desarrollador" initials="BV" /><UserRow email="bveraalvear@gmail.com" role="Desarrollador" initials="BA" /></div></section><div className="coming-card"><span>✦</span><div><b>Administradores y operadores próximamente</b><p>El acceso inicial permanece restringido a las dos cuentas de desarrollo hasta activar autenticación real, roles y permisos por módulo.</p></div></div></div> }
-function UserRow({ email, role, initials }: { email: string; role: string; initials: string }) { return <div className="user-row"><div className="avatar">{initials}</div><div><b>{email}</b><span>{role}</span></div><span className="status listo">Activo</span><button className="icon-button">⋯</button></div> }
+function Users({ currentMember }: { currentMember: StudioMember | null }) {
+  const [members, setMembers] = useState<StudioMember[]>([])
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<StudioMember['role']>('operator')
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const canManage = currentMember?.role === 'developer' || currentMember?.role === 'admin'
+  useEffect(() => { let active = true; void loadStudioMembers().then(remote => { if (active && remote.length) setMembers(remote) }).catch(() => { /* The initial allowlist remains visible before migration. */ }); return () => { active = false } }, [])
+  useEffect(() => { if (!members.length) setMembers(ALLOWED_EMAILS.map((memberEmail) => ({ email: memberEmail, role: 'developer', active: true, permissions: {} }))) }, [members.length])
+  const save = async () => {
+    const normalized = email.trim().toLowerCase()
+    if (!normalized.includes('@')) { setError('Escribe un correo válido.'); return }
+    setBusy(true); setError('')
+    const member: StudioMember = { email: normalized, role, active: true, permissions: role === 'operator' ? { dashboard: true, blocks: true, games: true } : {} }
+    try { await saveStudioMember(member); setMembers(current => current.some(item => item.email === normalized) ? current.map(item => item.email === normalized ? member : item) : [...current, member]); appendAudit('ALTA_USUARIO', `${normalized} agregado como ${role}`); setOpen(false); setEmail('') } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo guardar el usuario. Ejecuta la migración de Supabase primero.') } finally { setBusy(false) }
+  }
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">CONTROL DE ACCESO</div><h1>Usuarios autorizados.</h1><p className="muted">Los desarrolladores controlan administradores y operadores con permisos separados.</p></div><button className="primary" disabled={!canManage} onClick={() => { setError(''); setOpen(true) }}><Icon name="plus" /> Agregar usuario</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Equipo del estudio</h3><p>Las dos cuentas iniciales tienen rol desarrollador.</p></div><span className="preview-tag">{members.length} CUENTAS</span></div><div className="user-list">{members.map(member => <UserRow key={member.email} member={member} />)}</div></section>{open && <div className="modal-backdrop"><section className="modal small-modal"><header><div><span className="eyebrow">NUEVO ACCESO</span><h2>Agregar usuario</h2></div><button className="icon-button" onClick={() => setOpen(false)} type="button">×</button></header><div className="form-stack"><label>Correo<input autoFocus type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="operador@dominio.com" /></label><label>Rol<select value={role} onChange={event => setRole(event.target.value as StudioMember['role'])}><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>{error && <div className="error-box">{error}</div>}</div><footer><button className="ghost" onClick={() => setOpen(false)} type="button">Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()} type="button">{busy ? 'Guardando…' : 'Guardar acceso'}</button></footer></section></div>}</div>
+}
+function UserRow({ member }: { member: StudioMember }) { return <div className="user-row"><div className="avatar">{member.email.slice(0, 2).toUpperCase()}</div><div><b>{member.email}</b><span>{member.role === 'developer' ? 'Desarrollador' : member.role === 'admin' ? 'Administrador' : 'Operador'}</span></div><span className={`status ${member.active ? 'listo' : 'entregado'}`}>{member.active ? 'Activo' : 'Inactivo'}</span><button className="icon-button" disabled title="Los cambios se administran desde la siguiente versión de permisos">⋯</button></div> }
 
 function Audit() { const [events, setEvents] = useState<AuditEvent[]>(() => { try { return JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { return [] } }); const exportLog = () => { let latest = events; try { latest = JSON.parse(localStorage.getItem('bps-audit') ?? '[]') } catch { /* keep current events */ } setEvents(latest); triggerDownload(new Blob([JSON.stringify(latest, null, 2)], { type: 'application/json' }), 'bingo-promax-studio-auditoria.json') }; return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">TRAZABILIDAD</div><h1>Cada acción, registrada.</h1><p className="muted">Consulta la actividad importante del estudio.</p></div><button className="ghost" onClick={exportLog}><Icon name="download" /> Exportar registro</button></div><section className="panel table-panel"><div className="panel-heading"><div><h3>Registro de actividad</h3><p>Descargas, entregas y operaciones del estudio.</p></div><span className="preview-tag">{events.length ? `${events.length} EVENTOS` : 'SIN EVENTOS'}</span></div><div className="audit-list">{events.length ? events.slice(0, 100).map(event => <AuditRow key={event.id} icon={event.action === 'ENTREGA_BLOQUE' ? 'users' : 'download'} color={event.action === 'ENTREGA_BLOQUE' ? '#bda1ff' : '#6ee7d1'} title={event.detail} actor={event.actor} time={new Date(event.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })} />) : <AuditRow icon="spark" color="#f5c84b" title="El registro está listo para recibir operaciones" actor="Sistema" time="Ahora" />}</div></section></div> }
 function AuditRow({ icon, color, title, actor, time }: { icon: string; color: string; title: string; actor: string; time: string }) { return <div className="audit-row"><div className="activity-icon" style={{ color, background: `${color}18` }}><Icon name={icon} /></div><div><b>{title}</b><span>{actor}</span></div><time>{time}</time></div> }
 
 function App() {
   const [email, setEmail] = useState<string | null>(null)
+  const [currentMember, setCurrentMember] = useState<StudioMember | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [view, setView] = useState<View>('dashboard')
   const [blocks, setBlocks] = useState<BingoBlock[]>(() => { try { return JSON.parse(localStorage.getItem('bps-blocks') ?? '[]') } catch { return [] } })
@@ -379,30 +398,32 @@ function App() {
 
   useEffect(() => {
     let mounted = true
-    const acceptSession = (sessionEmail: string | undefined) => {
+    const acceptSession = async (sessionEmail: string | undefined) => {
       const normalized = sessionEmail?.trim().toLowerCase() ?? ''
-      if (mounted && ALLOWED_EMAILS.includes(normalized)) {
+      let member: StudioMember | null = null
+      if (normalized && !ALLOWED_EMAILS.includes(normalized)) {
+        try { member = await loadStudioMember(normalized) } catch { member = null }
+      }
+      const allowed = ALLOWED_EMAILS.includes(normalized) || Boolean(member?.active)
+      if (mounted && allowed) {
         localStorage.setItem('bps-email', normalized)
         setEmail(normalized)
+        setCurrentMember(member ?? { email: normalized, role: 'developer', active: true, permissions: {} })
       } else if (mounted) {
         localStorage.removeItem('bps-email')
         setEmail(null)
+        setCurrentMember(null)
       }
       if (mounted) setAuthReady(true)
+      return allowed
     }
     void supabase.auth.getSession().then(({ data }) => {
       const sessionEmail = data.session?.user.email
-      if (sessionEmail && !ALLOWED_EMAILS.includes(sessionEmail.trim().toLowerCase())) void supabase.auth.signOut()
-      acceptSession(sessionEmail)
+      void acceptSession(sessionEmail).then((allowed) => { if (sessionEmail && !allowed) void supabase.auth.signOut() })
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       const sessionEmail = session?.user.email
-      if (sessionEmail && !ALLOWED_EMAILS.includes(sessionEmail.trim().toLowerCase())) {
-        window.setTimeout(() => void supabase.auth.signOut(), 0)
-        acceptSession(undefined)
-        return
-      }
-      acceptSession(sessionEmail)
+      void acceptSession(sessionEmail).then((allowed) => { if (sessionEmail && !allowed) window.setTimeout(() => void supabase.auth.signOut(), 0) })
     })
     return () => { mounted = false; listener.subscription.unsubscribe() }
   }, [])
@@ -424,7 +445,7 @@ function App() {
   const onGenerated = (nextBlocks: BingoBlock[]) => replaceBlocks(nextBlocks)
   const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged); return merged }) }
   const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false); if (updated) void syncStudioBlock(updated).catch(() => { /* Offline delivery remains local. */ }); return next }) }
-  const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users />, audit: <Audit /> }[view]
+  const content = { dashboard: <Dashboard setView={setView} blocks={blocks} />, generator: <Generator onGenerated={onGenerated} setView={setView} />, blocks: <Blocks blocks={blocks} setView={setView} onUpdate={onBlockUpdate} />, games: <CompleteGames selectedPatterns={selectedPatterns} setSelectedPatterns={setSelectedPatterns} blocks={blocks} />, patterns: <Patterns />, integration: <Integration blocks={blocks} onImport={onImported} />, users: <Users currentMember={currentMember} />, audit: <Audit /> }[view]
   return <div className="app-shell"><Sidebar view={view} setView={setView} email={email} blocks={blocks} /><main className="main-area"><Topbar view={view} onLogout={() => void logout()} />{content}</main></div>
 }
 

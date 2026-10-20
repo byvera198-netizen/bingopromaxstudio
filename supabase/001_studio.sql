@@ -4,6 +4,7 @@
 create table if not exists public.studio_members (
   email text primary key,
   role text not null check (role in ('developer', 'admin', 'operator')),
+  permissions jsonb not null default '{"dashboard": true, "generator": false, "blocks": false, "games": false, "patterns": false, "integration": false, "users": false, "audit": false}'::jsonb,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -14,6 +15,9 @@ values
   ('byvera198@gmail.com', 'developer'),
   ('bveraalvear@gmail.com', 'developer')
 on conflict (email) do update set role = excluded.role, active = true, updated_at = now();
+
+alter table public.studio_members
+  add column if not exists permissions jsonb not null default '{"dashboard": true}'::jsonb;
 
 create or replace function public.studio_actor_role()
 returns text
@@ -114,6 +118,10 @@ drop policy if exists studio_members_developers on public.studio_members;
 create policy studio_members_developers on public.studio_members
   for all using (public.studio_actor_role() = 'developer')
   with check (public.studio_actor_role() = 'developer');
+
+drop policy if exists studio_members_read on public.studio_members;
+create policy studio_members_read on public.studio_members
+  for select using (public.studio_actor_role() is not null);
 
 drop policy if exists studio_campaigns_manage on public.studio_campaigns;
 create policy studio_campaigns_manage on public.studio_campaigns
