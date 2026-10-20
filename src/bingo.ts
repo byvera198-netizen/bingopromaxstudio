@@ -178,17 +178,45 @@ export function isPatternComplete(card: BingoCard, cells: number[], drawn: Set<n
   })
 }
 
+export type ProMaxCard = {
+  id: string
+  number: string
+  serial: string
+  grid: number[]
+  cardType: 'classic-5x5'
+  layout: { type: 'classic-5x5'; name: string; rows: 5; columns: 5; cells: Array<{ row: number; column: number }> }
+  sourceFile: string
+  sourcePage: number
+  status: 'active'
+}
+
 export type ProMaxPackage = {
-  schemaVersion: '1.0'
+  schemaVersion: '1.1'
   source: 'bingo-promax-studio'
+  target: 'bingo-control-pro'
   generatedAt: string
-  campaigns: Array<{ code: string; blocks: BingoBlock[] }>
+  game: { id: string; name: string; date: string; prize: string; status: 'ready'; notes: string; activePatternId: string; activePatternName: string; activePatternCells: number[]; autoPause: boolean }
+  blocks: BingoBlock[]
+  cards: ProMaxCard[]
+  campaigns: Array<{ code: string; blockCodes: string[] }>
 }
 
 export function createProMaxPackage(blocks: BingoBlock[]): ProMaxPackage {
   const campaigns = new Map<string, BingoBlock[]>()
   blocks.forEach(block => campaigns.set(block.campaign, [...(campaigns.get(block.campaign) ?? []), block]))
-  return { schemaVersion: '1.0', source: 'bingo-promax-studio', generatedAt: new Date().toISOString(), campaigns: [...campaigns.entries()].map(([code, campaignBlocks]) => ({ code, blocks: campaignBlocks })) }
+  const campaignCode = blocks[0]?.campaign ?? 'BPS-2026'
+  const cards: ProMaxCard[] = blocks.flatMap(block => block.sheets.flatMap(sheet => sheet.cards.map(card => ({
+    id: card.id,
+    number: card.id,
+    serial: sheet.code,
+    grid: card.numbers.flat(),
+    cardType: 'classic-5x5' as const,
+    layout: { type: 'classic-5x5' as const, name: 'Tradicional 5×5', rows: 5 as const, columns: 5 as const, cells: Array.from({ length: 25 }, (_, index) => ({ row: Math.floor(index / 5), column: index % 5 })) },
+    sourceFile: `${block.code}.pdf`,
+    sourcePage: sheet.pageNumber,
+    status: 'active' as const,
+  }))))
+  return { schemaVersion: '1.1', source: 'bingo-promax-studio', target: 'bingo-control-pro', generatedAt: new Date().toISOString(), game: { id: campaignCode, name: `Importación ${campaignCode}`, date: new Date().toISOString().slice(0, 10), prize: '', status: 'ready', notes: 'Partida preparada desde Bingo ProMax Studio.', activePatternId: 'linea-horizontal', activePatternName: 'Línea horizontal', activePatternCells: [10, 11, 12, 13, 14], autoPause: true }, blocks, cards, campaigns: [...campaigns.entries()].map(([code, campaignBlocks]) => ({ code, blockCodes: campaignBlocks.map(block => block.code) })) }
 }
 
 export function blocksToProMaxJson(blocks: BingoBlock[]) {
@@ -196,18 +224,19 @@ export function blocksToProMaxJson(blocks: BingoBlock[]) {
 }
 
 export function blocksToProMaxCsv(blocks: BingoBlock[]) {
-  const header = 'schema_version,source,campaign_code,block_code,sheet_code,page_number,card_1,card_2,card_3,card_4'
-  const rows = blocks.flatMap(block => block.sheets.map(sheet => [
-    '1.0', 'bingo-promax-studio', block.campaign, block.code, sheet.code, sheet.pageNumber,
-    ...sheet.cards.map(card => `${card.id}:${card.numbers.flat().join('|')}`),
-  ].map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')))
+  const header = 'schema_version,source,target,campaign_code,block_code,sheet_code,page_number,card_id,number,serial,source_file,source_page,grid'
+  const rows = blocks.flatMap(block => block.sheets.flatMap(sheet => sheet.cards.map(card => [
+    '1.1', 'bingo-promax-studio', 'bingo-control-pro', block.campaign, block.code, sheet.code, sheet.pageNumber,
+    card.id, card.id, sheet.code, `${block.code}.pdf`, sheet.pageNumber, card.numbers.flat().join('|'),
+  ].map(value => `"${String(value).replaceAll('"', '""')}"`).join(','))))
   return [header, ...rows].join('\n')
 }
 
 export function parseProMaxPackage(raw: string): BingoBlock[] {
   const parsed = JSON.parse(raw) as Partial<ProMaxPackage>
-  if (parsed.schemaVersion !== '1.0' || parsed.source !== 'bingo-promax-studio' || !Array.isArray(parsed.campaigns)) throw new Error('El archivo no corresponde al paquete Bingo ProMax Studio v1.0.')
-  const blocks = parsed.campaigns.flatMap(campaign => Array.isArray(campaign.blocks) ? campaign.blocks : [])
+  if (!['1.0', '1.1'].includes(String(parsed.schemaVersion)) || parsed.source !== 'bingo-promax-studio') throw new Error('El archivo no corresponde al paquete Bingo ProMax Studio v1.0 o v1.1.')
+  const legacyCampaigns = parsed.campaigns as unknown as Array<{ blocks?: BingoBlock[] }>
+  const blocks = Array.isArray(parsed.blocks) ? parsed.blocks : Array.isArray(legacyCampaigns) ? legacyCampaigns.flatMap(campaign => Array.isArray(campaign.blocks) ? campaign.blocks : []) : []
   if (!blocks.length || blocks.some(block => !block.code || !Array.isArray(block.sheets))) throw new Error('El paquete no contiene bloques válidos.')
   return blocks as BingoBlock[]
 }
