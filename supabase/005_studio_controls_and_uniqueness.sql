@@ -46,6 +46,9 @@ create table if not exists public.studio_card_signatures (
 create index if not exists studio_headers_tenant_idx on public.studio_headers(tenant_id, active, name);
 create index if not exists studio_watermarks_tenant_idx on public.studio_watermarks(tenant_id, distributor_id, seller_id);
 create index if not exists studio_card_signatures_block_idx on public.studio_card_signatures(tenant_id, block_code);
+create unique index if not exists studio_card_signatures_card_id_idx
+  on public.studio_card_signatures(tenant_id, card_id)
+  where card_id <> '';
 
 create or replace function public.studio_assert_block_cards_unique()
 returns trigger language plpgsql security definer set search_path = public

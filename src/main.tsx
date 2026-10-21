@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import { blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, cardSignature, createBlockPdf, createBlocksZip, isPatternComplete, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard, type BingoPrintMetadata } from './bingo'
+import { assertGeneratedInventoryUnique, assertUniqueInventory, blocksToJson, blocksToProMaxCsv, blocksToProMaxJson as blocksToProMaxJsonBase, cardSignature, createBlockPdf, createBlocksZip, isPatternComplete, MAX_SHEETS, parseProMaxPackage, triggerDownload, type BingoBlock, type BingoCard, type BingoPrintMetadata } from './bingo'
 import { supabase } from './supabase'
 import { clearStudioGenerationCheckpoint, createStudioAdmin, createStudioClient, createStudioPartyAccount, deleteStudioAdmin, deleteStudioBlock, deleteStudioGame, deleteStudioPartyAccount, deleteStudioPattern, deleteStudioHeader, loadStudioAuditEvents, loadStudioBlocks, loadStudioGame, loadStudioGenerationCheckpoint, loadStudioHeaders, loadStudioMember, loadStudioMembers, loadStudioNetwork, loadStudioPatterns, loadStudioTenants, loadStudioWatermarks, recordStudioSale, saveStudioGenerationCheckpoint, saveStudioHeader, saveStudioWatermark, syncStudioBlock, syncStudioGame, syncStudioInventory, syncStudioPatterns, transferStudioBlock, updateStudioPartyAccount, writeStudioAudit, type StudioClient, type StudioGame, type StudioHeader, type StudioMember, type StudioTenant, type StudioParty, type StudioSale, type StudioTransfer, type StudioWatermark } from './studio-backend'
 import './styles.css'
@@ -79,9 +79,7 @@ async function persistBlocks(blocks: BingoBlock[], syncRemote = true, tenantId?:
       transaction.onerror = () => { database.close(); reject(transaction.error ?? new Error('No se pudo guardar el inventario.')) }
     })
   } catch { /* The in-memory inventory remains available for the current session. */ }
-  if (syncRemote) {
-    try { await syncStudioInventory(blocks, tenantId) } catch { /* The local inventory remains the offline source of truth. */ }
-  }
+  if (syncRemote) await syncStudioInventory(blocks, tenantId)
 }
 
 async function persistGenerationChunk(blocks: BingoBlock[], tenantId?: string | null) {
@@ -431,6 +429,7 @@ function Generator({ onGenerated, setView, tenantId, existingBlocks }: { onGener
   const generate = () => {
     if (resumeJob) { void resumeGeneration(); return }
     const campaign = normalizeCampaign(code)
+    try { assertGeneratedInventoryUnique(existingBlocks, campaign) } catch (generationError) { setError(generationError instanceof Error ? generationError.message : 'El inventario contiene una repetición. La generación se detuvo.'); return }
     const job: GenerationCheckpoint = { id: 'active', campaign, totalSheets: sheets, completedSheets: 0, nextPage: 1, nextBlockNumber: 1, updatedAt: new Date().toISOString() }
     const usedSignatures = Array.from(new Set(existingBlocks.flatMap((block) => block.sheets.flatMap((sheet) => sheet.cards.map((card) => cardSignature(card.numbers))))))
     setGenerated([]); setResumeJob(null); void runGeneration(job, usedSignatures)
@@ -913,8 +912,8 @@ function App() {
   if (!email) return <Login onLogin={async (value) => { const invited = ALLOWED_EMAILS.includes(value) ? true : (await supabase.rpc('studio_login_allowed', { p_email: value })).data === true; if (!invited) throw new Error('Esta cuenta no ha sido creada por un desarrollador.'); const { error } = await supabase.auth.signInWithOtp({ email: value, options: { shouldCreateUser: true, emailRedirectTo: STUDIO_AUTH_REDIRECT_URL } }); if (error) throw error }} />
 
   const logout = async () => { await supabase.auth.signOut(); localStorage.removeItem('bps-email'); setEmail(null) }
-  const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); if (update === 'complete') void persistBlocks(merged, true, activeTenantId); return merged }) }
-  const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); void persistBlocks(merged, true, activeTenantId); return merged }) }
+  const onGenerated = (nextBlocks: BingoBlock[], update: GenerationUpdate = 'complete') => { setBlocks(current => { const merged = [...current]; nextBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); try { assertUniqueInventory(merged) } catch (inventoryError) { window.alert(inventoryError instanceof Error ? inventoryError.message : 'La generación contiene una repetición y fue detenida.'); return current } if (update === 'complete') void persistBlocks(merged, true, activeTenantId).catch(error => window.alert(error instanceof Error ? error.message : 'No se pudo sincronizar el inventario único.')); return merged }) }
+  const onImported = (importedBlocks: BingoBlock[]) => { setBlocks(current => { const merged = [...current]; importedBlocks.forEach(block => { const index = merged.findIndex(existing => existing.code === block.code); if (index >= 0) merged[index] = block; else merged.push(block) }); try { assertUniqueInventory(merged) } catch (inventoryError) { window.alert(inventoryError instanceof Error ? inventoryError.message : 'El paquete contiene cartones repetidos y no fue incorporado.'); return current } void persistBlocks(merged, true, activeTenantId).catch(error => window.alert(error instanceof Error ? error.message : 'No se pudo sincronizar el inventario único.')); return merged }) }
   const onBlockUpdate = (code: string, patch: Partial<BingoBlock>) => { setBlocks(current => { const next = current.map(block => block.code === code ? { ...block, ...patch } : block); const updated = next.find(block => block.code === code); void persistBlocks(next, false, activeTenantId); if (updated) void syncStudioBlock(updated, activeTenantId).catch(() => { /* Offline delivery remains local. */ }); return next }) }
   const onBlockDelete = async (code: string) => { await deleteStudioBlock(code, activeTenantId); setBlocks(current => { const next = current.filter(block => block.code !== code); void persistBlocks(next, false, activeTenantId); return next }) }
   const onTenantChange = (tenantId: string) => { setActiveTenantId(tenantId); localStorage.setItem('bps-active-tenant', tenantId); setBlocks([]); setView('dashboard') }

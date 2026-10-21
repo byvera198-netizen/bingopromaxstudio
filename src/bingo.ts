@@ -1,7 +1,9 @@
 import { jsPDF } from 'jspdf'
 import JSZip from 'jszip'
 
-export const MAX_SHEETS = 200_000
+// 250.000 hojas equivalen a 1.000.000 de cartones. La generación continúa
+// siendo por fragmentos para no bloquear la interfaz ni crear un ZIP gigante.
+export const MAX_SHEETS = 250_000
 export const SHEETS_PER_BLOCK = 40
 export const CARDS_PER_SHEET = 4
 
@@ -65,6 +67,34 @@ function shuffle<T>(items: T[], random: () => number): T[] {
 
 export function cardSignature(numbers: number[][]): string {
   return numbers.flat().join('-')
+}
+
+export function assertUniqueInventory(blocks: BingoBlock[]): void {
+  const blockCodes = new Set<string>()
+  const cardIds = new Set<string>()
+  const signatures = new Set<string>()
+
+  for (const block of blocks) {
+    if (blockCodes.has(block.code)) throw new Error(`Código de bloque repetido: ${block.code}`)
+    blockCodes.add(block.code)
+
+    for (const sheet of block.sheets) {
+      for (const card of sheet.cards) {
+        if (cardIds.has(card.id)) throw new Error(`Código de cartón repetido: ${card.id}`)
+        cardIds.add(card.id)
+        const signature = cardSignature(card.numbers)
+        if (signatures.has(signature)) throw new Error(`Cartón repetido: ${card.id}`)
+        signatures.add(signature)
+      }
+    }
+  }
+}
+
+export function assertGeneratedInventoryUnique(existingBlocks: BingoBlock[], campaign: string): void {
+  assertUniqueInventory(existingBlocks)
+  if (existingBlocks.some((block) => block.campaign === campaign)) {
+    throw new Error(`El lote ${campaign} ya existe. Usa un nombre de lote distinto para no repetir códigos.`)
+  }
 }
 
 function createCard(id: string, random: () => number): BingoCard {

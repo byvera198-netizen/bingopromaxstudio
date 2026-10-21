@@ -32,6 +32,7 @@ supabase/004_sales_clients.sql
 supabase/005_studio_controls_and_uniqueness.sql
 supabase/006_admin_ball_control.sql
 supabase/007_admin_block_control.sql
+supabase/008_global_card_code_uniqueness.sql
 ```
 
 Estas migraciones crean un espacio aislado por administrador, cuentas de
@@ -53,7 +54,8 @@ por cartón para impedir duplicados dentro de cada espacio administrativo.
 La migración 006 reserva el registro de bolillas y las validaciones de ganadores
 al administrador. La migración 007 impide eliminar bloques desde otros roles;
 además, las transferencias o ventas existentes pueden impedir el borrado para
-conservar la trazabilidad histórica.
+conservar la trazabilidad histórica. La migración 008 refuerza la unicidad del
+código de cada cartón dentro del espacio administrativo.
 
 En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL de Studio a `Redirect URLs`:
 

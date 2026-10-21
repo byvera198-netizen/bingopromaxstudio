@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import JSZip from 'jszip'
 import {
+  assertGeneratedInventoryUnique,
+  assertUniqueInventory,
   cardSignature,
   blocksToProMaxCsv,
   createBlockPdf,
@@ -81,6 +83,15 @@ test('permite continuar por fragmentos sin reiniciar hojas ni bloques', () => {
   assert.equal(allSheets(blocks)[0].pageNumber, 1)
   assert.equal(allSheets(blocks).at(-1).pageNumber, 100)
   assert.equal(new Set(cards.map((card) => cardSignature(card.numbers))).size, cards.length)
+})
+
+test('rechaza cartones repetidos y códigos repetidos en todo el inventario', () => {
+  const blocks = generateBatch('qa-unique-inventory', 100)
+  assert.doesNotThrow(() => assertUniqueInventory(blocks))
+
+  const duplicateCardBlocks = [blocks[0], { ...blocks[1], sheets: blocks[1].sheets.map((sheet, sheetIndex) => sheetIndex === 0 ? { ...sheet, cards: [blocks[0].sheets[0].cards[0], ...sheet.cards.slice(1)] } : sheet) }]
+  assert.throws(() => assertUniqueInventory(duplicateCardBlocks), /cartón repetido/i)
+  assert.throws(() => assertGeneratedInventoryUnique(blocks, 'QA-UNIQUE-INVENTORY'), /ya existe/)
 })
 
 test('rechaza cantidades fuera del rango operativo', () => {
