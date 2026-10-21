@@ -67,3 +67,10 @@ test('la migración de partidas reserva el registro de bolillas al administrador
   assert.match(sql, /studio_actor_role\(\) <> 'admin'/)
   assert.match(sql, /studio_games_admin_ball_control/)
 })
+
+test('la migración de bloques reserva el borrado a gestores', async () => {
+  const sql = await readFile(new URL('../supabase/007_admin_block_control.sql', import.meta.url), 'utf8')
+  assert.match(sql, /studio_assert_manager_block_delete/)
+  assert.match(sql, /studio_actor_role\(\) not in \('developer', 'admin'\)/)
+  assert.match(sql, /studio_blocks_manager_delete/)
+})

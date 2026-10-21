@@ -30,6 +30,8 @@ Finalmente ejecuta la migración de operación multiadministrador:
 supabase/003_multi_tenant_distribution.sql
 supabase/004_sales_clients.sql
 supabase/005_studio_controls_and_uniqueness.sql
+supabase/006_admin_ball_control.sql
+supabase/007_admin_block_control.sql
 ```
 
 Estas migraciones crean un espacio aislado por administrador, cuentas de
@@ -47,6 +49,11 @@ La migración 005 deja preconfigurados `byvera980@gmail.com` como administrador 
 desactivar administradores, distribuidores y vendedores, encabezados propios,
 marcas de agua por vendedor, selección de bloques por partida y una huella única
 por cartón para impedir duplicados dentro de cada espacio administrativo.
+
+La migración 006 reserva el registro de bolillas y las validaciones de ganadores
+al administrador. La migración 007 impide eliminar bloques desde otros roles;
+además, las transferencias o ventas existentes pueden impedir el borrado para
+conservar la trazabilidad histórica.
 
 En Authentication configura el proveedor Email, confirma las cuentas y agrega la URL de Studio a `Redirect URLs`:
 

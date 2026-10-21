@@ -166,6 +166,15 @@ export async function syncStudioBlock(block: BingoBlock, tenantId?: string | nul
   if (result.error) throw result.error
 }
 
+export async function deleteStudioBlock(code: string, tenantId?: string | null) {
+  const userId = await currentUserId()
+  if (!userId) return
+  let query = supabase.from('studio_blocks').delete().eq('code', code)
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { error } = await query
+  if (error) throw error
+}
+
 export async function loadStudioGenerationCheckpoint(tenantId?: string | null): Promise<StudioGenerationCheckpoint | null> {
   const userId = await currentUserId()
   if (!userId) return null
