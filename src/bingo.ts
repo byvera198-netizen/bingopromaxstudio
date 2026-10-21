@@ -339,8 +339,14 @@ export function triggerDownload(blob: Blob, name: string) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = name
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
   anchor.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+  anchor.remove()
+  // Large PDFs may take longer than a short timeout to be accepted by the
+  // browser download manager. Keep the object URL alive long enough for the
+  // download to start, then release it to avoid retaining the file in memory.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 export function blocksToJson(blocks: BingoBlock[]) {
