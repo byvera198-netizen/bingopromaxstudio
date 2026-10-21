@@ -184,12 +184,6 @@ function appendAudit(action: string, detail: string) {
 const seedPatterns: Pattern[] = [
   { id: 'full', name: 'Cartón lleno', description: 'Completar todas las casillas impresas.', group: 'Clásicos', color: '#f5c84b', cells: Array.from({ length: 25 }, (_, i) => i), active: true },
   { id: 'letter-a', name: 'Letra A', description: 'Figura con forma de A.', group: 'Letras', color: '#b9ed2c', cells: [0, 1, 2, 3, 4, 5, 9, 6, 8, 10, 12, 15, 20], active: true },
-  { id: 'letter-x', name: 'Letra X', description: 'Las dos diagonales forman una X.', group: 'Letras', color: '#d29cff', cells: [0, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24], active: true },
-  { id: 'cross', name: 'Cruz', description: 'La fila y columna central.', group: 'Especiales', color: '#6ee7d1', cells: [2, 7, 10, 11, 12, 13, 14, 17, 22], active: true },
-  { id: 'diamond', name: 'Diamante', description: 'Contorno en forma de diamante.', group: 'Especiales', color: '#7ca6ff', cells: [2, 6, 8, 10, 14, 16, 18, 22], active: false },
-  { id: 'corners', name: 'Cuatro esquinas', description: 'Las cuatro esquinas del cartón.', group: 'Clásicos', color: '#ff9e5c', cells: [0, 4, 20, 24], active: false },
-  { id: 'line', name: 'Línea central', description: 'Completar la fila central.', group: 'Clásicos', color: '#ef7898', cells: [10, 11, 12, 13, 14], active: false },
-  { id: 'number-7', name: 'Número 7', description: 'Figura con forma de 7.', group: 'Números', color: '#b9ed2c', cells: [0, 1, 2, 3, 4, 9, 14, 19, 24], active: false },
 ]
 
 const maskFor = (...rows: string[]) => rows.flatMap((row, rowIndex) => [...row].map((cell, colIndex) => cell === '1' ? rowIndex * 5 + colIndex : -1)).filter(index => index >= 0)
@@ -208,11 +202,12 @@ const numberMasks: Record<string, number[]> = {
   '3': maskFor('11110','00001','01110','00001','11110'), '4': maskFor('10010','10010','11111','00010','00010'), '5': maskFor('11111','10000','11110','00001','11110'),
   '6': maskFor('01110','10000','11110','10001','01110'), '7': maskFor('11111','00010','00100','01000','01000'), '8': maskFor('01110','10001','01110','10001','01110'), '9': maskFor('01110','10001','01111','00001','01110'),
 }
-const extraNames = ['Letra B','Letra C','Letra D','Letra E','Letra F','Letra G','Letra H','Letra I','Letra J','Letra K','Letra L','Letra M','Letra N','Letra O','Letra P','Letra Q','Letra R','Letra S','Letra T','Letra U','Letra V','Letra W','Letra X','Letra Y','Letra Z','Número 0','Número 1','Número 2','Número 3','Número 4','Número 5','Número 6','Número 7','Número 8','Número 9','Forma #1 completa','Forma #3 completa','Forma #4 completa','Forma #5 completa','Forma #7 completa','Forma #9 completa','Eche Leche','Bombombum','Keke Keke','Yapa','Avión','Flecha','Espada','Pesa','Rombo','Bomba','Sonrisa','Mini O','Perrito','Cruz','Más','Martillo']
+const extraNames = ['Letra B','Letra C','Letra D','Letra E','Letra F','Letra G','Letra H','Letra I','Letra J','Letra K','Letra L','Letra M','Letra N','Letra O','Letra P','Letra Q','Letra R','Letra S','Letra T','Letra U','Letra V','Letra W','Letra X','Letra Y','Letra Z','Número 1','Número 2','Número 3','Número 4','Número 5','Número 6','Número 7','Número 8','Número 9']
+const legacyPatternNames = new Set(['Número 0','Forma #1 completa','Forma #3 completa','Forma #4 completa','Forma #5 completa','Forma #7 completa','Forma #9 completa','Eche Leche','Bombombum','Keke Keke','Yapa','Avión','Flecha','Espada','Pesa','Rombo','Bomba','Sonrisa','Mini O','Perrito','Cruz','Más','Martillo'])
 const specialMasks = [maskFor('11111','10001','10001','10001','11111'), maskFor('00100','01110','11111','01110','00100'), maskFor('10001','01010','00100','01010','10001'), maskFor('11111','00100','00100','00100','11111'), maskFor('11111','10000','11110','10000','11111'), maskFor('10001','11011','10101','11011','10001'), maskFor('00100','01110','11111','01110','00100'), maskFor('10000','11000','10100','10010','10001'), maskFor('00001','00010','00100','01000','10000'), maskFor('10001','01010','00100','01010','10001'), maskFor('00100','01010','10001','01010','00100'), maskFor('01110','10001','10101','10001','01110'), maskFor('10001','01010','00100','01010','10001'), maskFor('00100','01110','00100','11111','00100'), maskFor('10001','10001','11111','10001','10001'), maskFor('01110','10001','11111','10001','01110'), maskFor('11111','10000','11111','10000','11111'), maskFor('10001','10101','10001','10101','10001'), maskFor('11111','10101','11111','10101','11111'), maskFor('10000','10000','11111','10000','10000')]
-const extraPatterns: Pattern[] = extraNames.slice(0, 56).map((name, index) => { const key = name.replace('Letra ', '').replace('Número ', ''); const cells = name.startsWith('Letra ') ? (letterMasks[key] ?? maskFor('11111','00100','00100','00100','11111')) : name.startsWith('Número ') ? (numberMasks[key] ?? specialMasks[index % specialMasks.length]) : specialMasks[index % specialMasks.length]; const group = name.startsWith('Letra ') ? 'Letras' : name.startsWith('Número ') ? 'Números' : 'Especiales'; return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, description: `Figura ${name.toLowerCase()} para jugar en una partida.`, group, color: ['#b9ed2c','#6ee7d1','#bda1ff','#ff9e5c','#ef7898'][index % 5], cells, active: false } })
+const extraPatterns: Pattern[] = extraNames.map((name, index) => { const key = name.replace('Letra ', '').replace('Número ', ''); const cells = name.startsWith('Letra ') ? (letterMasks[key] ?? []) : (numberMasks[key] ?? []); const group = name.startsWith('Letra ') ? 'Letras' : 'Números'; return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, description: `Figura ${name.toLowerCase()} para jugar en una partida.`, group, color: ['#b9ed2c','#6ee7d1','#bda1ff','#ff9e5c','#ef7898'][index % 5], cells, active: name === 'Letra B' || name === 'Letra C' } })
 const patternCatalog: Pattern[] = [...seedPatterns, ...extraPatterns]
-function readPatternCatalog(): Pattern[] { try { const saved: Pattern[] = JSON.parse(localStorage.getItem('bps-patterns') ?? '[]'); return patternCatalog.map(pattern => saved.find(item => item.id === pattern.id) ?? pattern).concat(saved.filter(item => !patternCatalog.some(pattern => pattern.id === item.id))) } catch { return patternCatalog } }
+function readPatternCatalog(): Pattern[] { try { const saved: Pattern[] = JSON.parse(localStorage.getItem('bps-patterns') ?? '[]'); return patternCatalog.map(pattern => saved.find(item => item.id === pattern.id) ?? pattern).concat(saved.filter(item => !patternCatalog.some(pattern => pattern.id === item.id) && !legacyPatternNames.has(item.name))) } catch { return patternCatalog } }
 function blocksToProMaxJson(blocks: BingoBlock[]) { return blocksToProMaxJsonBase(blocks, readPatternCatalog().map(pattern => ({ id: pattern.id, name: pattern.name, description: pattern.description, group: pattern.group, color: pattern.color, cells: pattern.cells, active: pattern.active }))) }
 
 const sampleCard = [
@@ -424,9 +419,10 @@ function PatternsCatalog({ tenantId }: { tenantId?: string }) {
     let active = true
     void loadStudioPatterns(tenantId).then(remote => {
       if (!active || !remote.length) return
+      const currentRemote = remote.filter(pattern => !legacyPatternNames.has(pattern.name))
       const local = readPatternCatalog()
-      const merged = local.map(pattern => remote.find(item => item.id === pattern.id) ?? pattern)
-      remote.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      const merged = local.map(pattern => currentRemote.find(item => item.id === pattern.id) ?? pattern)
+      currentRemote.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
       localStorage.setItem('bps-patterns', JSON.stringify(merged))
       setPatterns(merged)
     }).catch(() => { /* Local catalog remains available offline. */ })
@@ -436,7 +432,7 @@ function PatternsCatalog({ tenantId }: { tenantId?: string }) {
   const toggle = (id: string) => update(patterns.map(item => item.id === id ? { ...item, active: !item.active } : item))
   const save = (pattern: Pattern) => { const next = patterns.some(item => item.id === pattern.id) ? patterns.map(item => item.id === pattern.id ? pattern : item) : [...patterns, pattern]; update(next); setEditing(null) }
   const remove = async (pattern: Pattern) => { if (!pattern.id || !window.confirm(`¿Eliminar el patrón ${pattern.name}?`)) return; try { await deleteStudioPattern(pattern.id, tenantId); const next = patterns.filter(item => item.id !== pattern.id); setPatterns(next); localStorage.setItem('bps-patterns', JSON.stringify(next)); } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'No se pudo eliminar el patrón.') } }
-  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">BIBLIOTECA DE FIGURAS</div><h1>Administra tus patrones.</h1><p className="muted">Selecciona las figuras que podrás usar en cada partida.</p></div><button className="primary" onClick={() => setEditing({ id: '', name: '', description: 'Patrón personalizado creado por el estudio.', group: 'Personalizados', color: '#f5c84b', cells: [12], active: false })}><Icon name="plus" /> Crear patrón</button></div><div className="pattern-summary"><div><span className="summary-orb">✦</span><div><b>{patterns.filter(p => p.active).length} patrones habilitados</b><small>{patterns.length} patrones disponibles</small></div></div><div className="summary-chips"><span>● {patterns.filter(p => p.group === 'Clásicos').length} clásicos</span><span>✦ {patterns.filter(p => p.group === 'Letras').length} letras</span><span>⌘ {patterns.filter(p => p.group === 'Especiales').length} especiales</span></div></div><div className="pattern-grid">{patterns.map(pattern => <PatternCard key={pattern.id} pattern={pattern} onToggle={() => toggle(pattern.id)} onEdit={() => setEditing(pattern)} onDelete={() => void remove(pattern)} />)}</div>{editing && <PatternEditor initial={editing} onClose={() => setEditing(null)} onSave={save} />}</div>
+  return <div className="page-content"><div className="page-intro"><div><div className="eyebrow">BIBLIOTECA DE FIGURAS</div><h1>Administra tus patrones.</h1><p className="muted">Selecciona las figuras que podrás usar en cada partida.</p></div><button className="primary" onClick={() => setEditing({ id: '', name: '', description: 'Patrón personalizado creado por el estudio.', group: 'Personalizados', color: '#f5c84b', cells: [12], active: false })}><Icon name="plus" /> Crear patrón</button></div><div className="pattern-summary"><div><span className="summary-orb">✦</span><div><b>{patterns.filter(p => p.active).length} patrones habilitados</b><small>{patterns.length} patrones disponibles</small></div></div><div className="summary-chips"><span>● {patterns.filter(p => p.group === 'Clásicos').length} clásicos</span><span>✦ {patterns.filter(p => p.group === 'Letras').length} letras</span><span>⌘ {patterns.filter(p => p.group === 'Números').length} números</span></div></div><div className="pattern-grid">{patterns.map(pattern => <PatternCard key={pattern.id} pattern={pattern} onToggle={() => toggle(pattern.id)} onEdit={() => setEditing(pattern)} onDelete={() => void remove(pattern)} />)}</div>{editing && <PatternEditor initial={editing} onClose={() => setEditing(null)} onSave={save} />}</div>
 }
 function HeadersManager({ tenantId }: { tenantId?: string }) {
   const [headers, setHeaders] = useState<StudioHeader[]>([])
@@ -472,7 +468,7 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks, tenantId
     let active = true
     void Promise.all([loadStudioGame(tenantId), loadStudioPatterns(tenantId)]).then(([remote, remotePatterns]) => {
       if (!active) return
-      if (remotePatterns.length) setPatternCatalog(remotePatterns.map(pattern => ({ ...pattern })))
+      if (remotePatterns.length) setPatternCatalog(remotePatterns.filter(pattern => !legacyPatternNames.has(pattern.name)).map(pattern => ({ ...pattern })))
       if (remote) {
         setGameId(remote.id)
         localStorage.setItem('bps-current-game', remote.id)
@@ -739,7 +735,7 @@ function App() {
   const [authReady, setAuthReady] = useState(false)
   const [view, setView] = useState<View>('dashboard')
   const [blocks, setBlocks] = useState<BingoBlock[]>([])
-  const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a'])
+  const [selectedPatterns, setSelectedPatterns] = useState(['full', 'letter-a', 'letter-b', 'letter-c'])
 
   useEffect(() => {
     let mounted = true
