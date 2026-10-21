@@ -208,6 +208,13 @@ const specialMasks = [maskFor('11111','10001','10001','10001','11111'), maskFor(
 const extraPatterns: Pattern[] = extraNames.map((name, index) => { const key = name.replace('Letra ', '').replace('Número ', ''); const cells = name.startsWith('Letra ') ? (letterMasks[key] ?? []) : (numberMasks[key] ?? []); const group = name.startsWith('Letra ') ? 'Letras' : 'Números'; return { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, description: `Figura ${name.toLowerCase()} para jugar en una partida.`, group, color: ['#b9ed2c','#6ee7d1','#bda1ff','#ff9e5c','#ef7898'][index % 5], cells, active: name === 'Letra B' || name === 'Letra C' } })
 const patternCatalog: Pattern[] = [...seedPatterns, ...extraPatterns]
 function readPatternCatalog(): Pattern[] { try { const saved: Pattern[] = JSON.parse(localStorage.getItem('bps-patterns') ?? '[]'); return patternCatalog.map(pattern => saved.find(item => item.id === pattern.id) ?? pattern).concat(saved.filter(item => !patternCatalog.some(pattern => pattern.id === item.id) && !legacyPatternNames.has(item.name))) } catch { return patternCatalog } }
+function mergePatternCatalog(remote: Pattern[]): Pattern[] {
+  const local = readPatternCatalog()
+  const remoteById = new Map(remote.filter(pattern => !legacyPatternNames.has(pattern.name)).map(pattern => [pattern.id, pattern]))
+  const merged = local.map(pattern => remoteById.get(pattern.id) ?? pattern)
+  remote.filter(pattern => !legacyPatternNames.has(pattern.name) && !merged.some(existing => existing.id === pattern.id)).forEach(pattern => merged.push(pattern))
+  return merged
+}
 function blocksToProMaxJson(blocks: BingoBlock[]) { return blocksToProMaxJsonBase(blocks, readPatternCatalog().map(pattern => ({ id: pattern.id, name: pattern.name, description: pattern.description, group: pattern.group, color: pattern.color, cells: pattern.cells, active: pattern.active }))) }
 
 const sampleCard = [
@@ -334,10 +341,7 @@ function Generator({ onGenerated, setView, tenantId, existingBlocks }: { onGener
     let active = true
     void loadStudioPatterns(tenantId).then(remote => {
       if (!active || !remote.length) return
-      const remotePatterns = remote.filter(pattern => !legacyPatternNames.has(pattern.name))
-      const local = readPatternCatalog()
-      const merged = local.map(pattern => remotePatterns.find(item => item.id === pattern.id) ?? pattern)
-      remotePatterns.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      const merged = mergePatternCatalog(remote)
       setPatternOptions(merged)
       localStorage.setItem('bps-patterns', JSON.stringify(merged))
     }).catch(() => { /* The local catalog remains available if Supabase is offline. */ })
@@ -467,10 +471,7 @@ function PatternsCatalog({ tenantId }: { tenantId?: string }) {
     let active = true
     void loadStudioPatterns(tenantId).then(remote => {
       if (!active || !remote.length) return
-      const currentRemote = remote.filter(pattern => !legacyPatternNames.has(pattern.name))
-      const local = readPatternCatalog()
-      const merged = local.map(pattern => currentRemote.find(item => item.id === pattern.id) ?? pattern)
-      currentRemote.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      const merged = mergePatternCatalog(remote)
       localStorage.setItem('bps-patterns', JSON.stringify(merged))
       setPatterns(merged)
     }).catch(() => { /* Local catalog remains available offline. */ })
@@ -538,7 +539,7 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks, tenantId
     let active = true
     void Promise.all([loadStudioGame(tenantId), loadStudioPatterns(tenantId)]).then(([remote, remotePatterns]) => {
       if (!active) return
-      if (remotePatterns.length) setPatternCatalog(remotePatterns.filter(pattern => !legacyPatternNames.has(pattern.name)).map(pattern => ({ ...pattern })))
+      setPatternCatalog(mergePatternCatalog(remotePatterns))
       if (remote) {
         setGameId(remote.id)
         localStorage.setItem('bps-current-game', remote.id)
