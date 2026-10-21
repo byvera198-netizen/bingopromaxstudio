@@ -23,6 +23,7 @@ export type BingoPrintMetadata = {
   header?: string
   patterns?: string[]
   notes?: string
+  freeLabel?: string
 }
 
 export type BingoBlock = {
@@ -109,7 +110,7 @@ export function generateBatch(campaign: string, totalSheets: number, startingPag
   return generateBatchChunk(campaign, totalSheets, startingPage, 1, new Set<string>(), onProgress)
 }
 
-function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: number, height: number) {
+function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: number, height: number, freeLabel = 'LIBRE') {
   const cell = Math.min(width / 5, height / 6.3)
   const gridWidth = cell * 5
   const gridHeight = cell * 6
@@ -125,13 +126,23 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
   })
   doc.setFont('courier', 'bold')
   doc.setFontSize(Math.max(5, cell * 1.35))
+  const cardNumber = card.id.split('-').slice(-2).join('-') || card.id
   card.numbers.forEach((row, rowIndex) => row.forEach((value, colIndex) => {
     const cx = startX + colIndex * cell
     const cy = y + (rowIndex + 1) * cell
     doc.setFillColor(value === 0 ? 209 : 247, value === 0 ? 181 : 246, value === 0 ? 70 : 231)
     doc.rect(cx, cy, cell, cell, 'FD')
     doc.setTextColor(value === 0 ? 40 : 28, value === 0 ? 31 : 35, value === 0 ? 14 : 32)
-    doc.text(value === 0 ? '★' : String(value), cx + cell / 2, cy + cell * .66, { align: 'center' })
+    if (value === 0) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(Math.max(3.8, cell * .58))
+      doc.text(freeLabel.trim() || 'LIBRE', cx + cell / 2, cy + cell * .43, { align: 'center' })
+      doc.setFont('courier', 'bold')
+      doc.setFontSize(Math.max(2.8, cell * .36))
+      doc.text(cardNumber, cx + cell / 2, cy + cell * .76, { align: 'center' })
+    } else {
+      doc.text(String(value), cx + cell / 2, cy + cell * .66, { align: 'center' })
+    }
   }))
   doc.setTextColor(70, 77, 72)
   doc.setFont('courier', 'normal')
@@ -179,7 +190,7 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       doc.text(watermark.text, x, y, { align: watermark.position.endsWith('right') ? 'right' : 'left', angle: -18 })
     }
     const positions = [[14, 39], [108, 39], [14, 139], [108, 139]] as const
-    sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 88, 82))
+    sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 88, 82, metadata?.freeLabel ?? 'LIBRE'))
     doc.setDrawColor(220, 218, 207)
     doc.line(14, 279, 196, 279)
     doc.setTextColor(95, 102, 96)
