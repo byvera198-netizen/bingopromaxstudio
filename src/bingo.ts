@@ -21,6 +21,7 @@ export type BingoPrintMetadata = {
   date?: string
   prizePlan?: string
   header?: string
+  banner?: string
   patterns?: string[]
   notes?: string
   freeLabel?: string
@@ -199,7 +200,20 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
     doc.setFillColor(13, 17, 17)
     doc.rect(0, 0, 210, 22, 'F')
     const metadata = block.printMetadata
-    if (metadata?.header) {
+    if (metadata?.banner) {
+      try {
+        const format = metadata.banner.startsWith('data:image/png') ? 'PNG' : 'JPEG'
+        const properties = doc.getImageProperties(metadata.banner)
+        const maxWidth = 126
+        const maxHeight = 18
+        const scale = Math.min(maxWidth / properties.width, maxHeight / properties.height)
+        const width = properties.width * scale
+        const height = properties.height * scale
+        doc.addImage(metadata.banner, format, 14, 2 + (maxHeight - height) / 2, width, height, 'studio-banner', 'FAST')
+      } catch {
+        // If a legacy or invalid image is present, keep the text header and codes usable.
+      }
+    } else if (metadata?.header) {
       doc.setTextColor(245, 200, 75)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(14)
