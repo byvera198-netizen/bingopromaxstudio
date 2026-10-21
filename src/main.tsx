@@ -329,7 +329,20 @@ function Generator({ onGenerated, setView, tenantId, existingBlocks }: { onGener
   const [generated, setGenerated] = useState<BingoBlock[]>([])
   const [error, setError] = useState('')
   const [resumeJob, setResumeJob] = useState<GenerationCheckpoint | null>(null)
-  const patternOptions = readPatternCatalog().filter(pattern => pattern.active)
+  const [patternOptions, setPatternOptions] = useState<Pattern[]>(readPatternCatalog)
+  useEffect(() => {
+    let active = true
+    void loadStudioPatterns(tenantId).then(remote => {
+      if (!active || !remote.length) return
+      const remotePatterns = remote.filter(pattern => !legacyPatternNames.has(pattern.name))
+      const local = readPatternCatalog()
+      const merged = local.map(pattern => remotePatterns.find(item => item.id === pattern.id) ?? pattern)
+      remotePatterns.filter(item => !local.some(pattern => pattern.id === item.id)).forEach(pattern => merged.push(pattern))
+      setPatternOptions(merged)
+      localStorage.setItem('bps-patterns', JSON.stringify(merged))
+    }).catch(() => { /* The local catalog remains available if Supabase is offline. */ })
+    return () => { active = false }
+  }, [tenantId])
   const printMetadata = (): BingoPrintMetadata => ({
     date: gameDate.trim() || undefined,
     prizePlan: prizePlan.trim() || undefined,
@@ -568,7 +581,10 @@ function CompleteGames({ selectedPatterns, setSelectedPatterns, blocks, tenantId
   useEffect(() => {
     setActiveBlockCodes(current => current.filter(code => blocks.some(block => block.code === code)))
   }, [blocks])
-  const activePatterns = patternCatalog.filter(pattern => pattern.active)
+  // La disponibilidad para una jugada se decide con el visto de esta partida.
+  // Por eso el administrador debe poder ver todo su catálogo, incluso patrones
+  // que estén pausados en la biblioteca general.
+  const activePatterns = patternCatalog
   const canRegisterBalls = member?.role === 'admin'
   const canManageGame = member?.role === 'developer' || member?.role === 'admin'
   const createNewGame = async (mode: 'replace' | 'preserve') => {
