@@ -175,6 +175,23 @@ export async function deleteStudioBlock(code: string, tenantId?: string | null) 
   if (error) throw error
 }
 
+export async function deleteStudioBlocks(codes: string[], tenantId?: string | null) {
+  const userId = await currentUserId()
+  if (!userId || !codes.length) return
+  const uniqueCodes = Array.from(new Set(codes))
+  const requests: Promise<void>[] = []
+  for (let offset = 0; offset < uniqueCodes.length; offset += 80) {
+    const chunk = uniqueCodes.slice(offset, offset + 80)
+    requests.push((async () => {
+      let query = supabase.from('studio_blocks').delete().in('code', chunk)
+      if (tenantId) query = query.eq('tenant_id', tenantId)
+      const { error } = await query
+      if (error) throw error
+    })())
+  }
+  await Promise.all(requests)
+}
+
 export async function loadStudioGenerationCheckpoint(tenantId?: string | null): Promise<StudioGenerationCheckpoint | null> {
   const userId = await currentUserId()
   if (!userId) return null
