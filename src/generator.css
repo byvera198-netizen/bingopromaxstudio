@@ -78,6 +78,26 @@
   width: 15px;
   height: 15px;
   accent-color: var(--gold);
+  appearance: none;
+  border: 1px solid #59645e;
+  border-radius: 4px;
+  background: #0f1515;
+  display: grid;
+  place-items: center;
+  margin: 0;
+}
+
+.pattern-check-option input:checked {
+  border-color: var(--gold);
+  background: var(--gold);
+}
+
+.pattern-check-option input:checked::after {
+  content: '✓';
+  color: #17180f;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .pattern-check-option span,
@@ -106,6 +126,13 @@
   padding: 16px 0 4px;
   border-top: 1px solid #202829;
   border-bottom: 1px solid #202829;
+}
+
+.form-panel label:has(input[type="file"]) {
+  padding: 11px 12px;
+  border: 1px dashed #66572c;
+  border-radius: 9px;
+  background: #f5c84b08;
 }
 
 .form-panel input[type="file"] {
