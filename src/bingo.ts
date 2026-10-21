@@ -150,6 +150,48 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
   doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center' })
 }
 
+function addPatternPanel(doc: jsPDF, patterns: string[], x: number, y: number, width: number, height: number) {
+  doc.setDrawColor(154, 122, 30)
+  doc.setLineWidth(.45)
+  doc.setFillColor(252, 250, 243)
+  doc.roundedRect(x, y, width, height, 2, 2, 'FD')
+  doc.setTextColor(104, 78, 12)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(5.2)
+  doc.text('PATRONES DE JUEGO', x + width / 2, y + 7, { align: 'center' })
+  if (!patterns.length) {
+    doc.setTextColor(108, 116, 108)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(4.2)
+    doc.text('Sin patrones seleccionados', x + width / 2, y + 15, { align: 'center', maxWidth: width - 6 })
+    return
+  }
+  const columns = patterns.length > 60 ? 3 : 2
+  const columnWidth = (width - 6) / columns
+  const rows = Math.ceil(patterns.length / columns)
+  const fontSize = patterns.length > 60 ? 2.45 : patterns.length > 40 ? 2.7 : 3.05
+  const lineHeight = fontSize * .72
+  const rowHeight = Math.max(5.2, lineHeight * 2 + .9)
+  const startY = y + 13
+  patterns.forEach((pattern, index) => {
+    const column = Math.floor(index / rows)
+    const row = index % rows
+    const textX = x + 3 + column * columnWidth
+    const textWidth = columnWidth - 2
+    const lines = doc.splitTextToSize(`${String(index + 1).padStart(2, '0')}  ${pattern}`, textWidth).slice(0, 2)
+    doc.setFillColor(245, 200, 75)
+    doc.circle(textX + .8, startY + row * rowHeight - 1.1, .7, 'F')
+    doc.setTextColor(45, 52, 49)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(fontSize)
+    lines.forEach((line: string, lineIndex: number) => doc.text(line, textX + 2, startY + row * rowHeight + lineIndex * lineHeight))
+  })
+  doc.setTextColor(104, 112, 104)
+  doc.setFont('courier', 'normal')
+  doc.setFontSize(3.4)
+  doc.text(`${patterns.length} patrón${patterns.length === 1 ? '' : 'es'}`, x + width / 2, y + height - 4, { align: 'center' })
+}
+
 export function createBlockPdf(block: BingoBlock, watermark = block.watermark): ArrayBuffer {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
   block.sheets.forEach((sheet, index) => {
@@ -171,14 +213,12 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
     const metadataLines = [
       metadata?.date ? `Fecha: ${metadata.date}` : '',
       metadata?.prizePlan ? `Plan de premios: ${metadata.prizePlan}` : '',
-      metadata?.patterns?.length ? `Patrones: ${metadata.patterns.join(' · ')}` : '',
     ].filter(Boolean)
     if (metadataLines.length) {
       doc.setTextColor(50, 58, 52)
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(7)
       metadataLines.slice(0, 2).forEach((line, lineIndex) => doc.text(line, 14, 28 + lineIndex * 4))
-      if (metadataLines[2]) doc.text(metadataLines[2], 14, 36)
     }
     if (watermark?.text) {
       const shade = Math.max(150, Math.min(235, Math.round(235 - watermark.opacity * 180)))
@@ -189,8 +229,9 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       const [x, y] = coordinates[watermark.position]
       doc.text(watermark.text, x, y, { align: watermark.position.endsWith('right') ? 'right' : 'left', angle: -18 })
     }
-    const positions = [[14, 39], [108, 39], [14, 139], [108, 139]] as const
-    sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 88, 82, metadata?.freeLabel ?? 'LIBRE'))
+    addPatternPanel(doc, metadata?.patterns ?? [], 84, 39, 42, 185)
+    const positions = [[8, 39], [122, 39], [8, 139], [122, 139]] as const
+    sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 80, 82, metadata?.freeLabel ?? 'LIBRE'))
     doc.setDrawColor(220, 218, 207)
     doc.line(14, 279, 196, 279)
     doc.setTextColor(95, 102, 96)

@@ -58,3 +58,12 @@ test('la migración de controles fija cuentas solicitadas y evita cartones repet
   assert.match(sql, /Solo un desarrollador puede eliminar administradores/)
   assert.match(sql, /studio_save_watermark/)
 })
+
+test('la migración de partidas reserva el registro de bolillas al administrador', async () => {
+  const sql = await readFile(new URL('../supabase/006_admin_ball_control.sql', import.meta.url), 'utf8')
+  assert.match(sql, /studio_assert_admin_ball_control/)
+  assert.match(sql, /old\.drawn_numbers is distinct from new\.drawn_numbers/)
+  assert.match(sql, /old\.winner_history is distinct from new\.winner_history/)
+  assert.match(sql, /studio_actor_role\(\) <> 'admin'/)
+  assert.match(sql, /studio_games_admin_ball_control/)
+})

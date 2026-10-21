@@ -33,6 +33,74 @@
   color: #eef0e8;
 }
 
+.pattern-checklist {
+  border: 1px solid #2b3636;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0;
+  min-width: 0;
+}
+
+.pattern-checklist legend {
+  padding: 0 5px;
+  color: #9ca7a4;
+  font-size: 10px;
+}
+
+.pattern-checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 3px 2px 5px;
+}
+
+.pattern-check-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #273231;
+  border-radius: 6px;
+  background: #151b1c;
+  cursor: pointer;
+}
+
+.pattern-check-option:has(input:checked) {
+  border-color: #74622e;
+  background: #211f16;
+}
+
+.pattern-check-option input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--gold);
+}
+
+.pattern-check-option span,
+.pattern-check-option b,
+.pattern-check-option small {
+  display: block;
+  min-width: 0;
+}
+
+.pattern-check-option b {
+  overflow: hidden;
+  color: #eef0e8;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pattern-check-option small {
+  margin-top: 2px;
+  color: #76827e;
+  font-size: 8px;
+}
+
 .generator-details {
   margin: 20px 0 8px;
   padding: 16px 0 4px;
