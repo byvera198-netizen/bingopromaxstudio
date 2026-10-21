@@ -341,6 +341,15 @@ export async function syncStudioGame(game: StudioGame, tenantId?: string | null)
   if (result.error) throw result.error
 }
 
+export async function deleteStudioGame(id: string, tenantId?: string | null) {
+  const userId = await currentUserId()
+  if (!userId) return
+  let query = supabase.from('studio_games').delete().eq('id', id)
+  if (tenantId) query = query.eq('tenant_id', tenantId)
+  const { error } = await query
+  if (error) throw error
+}
+
 function mapPattern(row: Record<string, unknown>): StudioPattern | null {
   const cells = Array.isArray(row.cells) ? row.cells.filter((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 25) : []
   const id = String(row.id ?? '')
