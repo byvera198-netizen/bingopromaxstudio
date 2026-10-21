@@ -68,6 +68,22 @@
   cursor: pointer;
 }
 
+.form-panel .pattern-check-option {
+  display: flex;
+  flex-direction: row;
+  margin: 0;
+  min-height: 58px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.form-panel .pattern-check-option:hover {
+  border-color: #8c7639;
+  background: #1b1f1d;
+  transform: translateY(-1px);
+}
+
 .pattern-check-option:has(input:checked) {
   border-color: #74622e;
   background: #211f16;
@@ -112,6 +128,10 @@
 .pattern-check-option small {
   display: block;
   min-width: 0;
+}
+
+.pattern-check-option > span:not(.pattern-icon) {
+  flex: 1;
 }
 
 .pattern-check-option b {
