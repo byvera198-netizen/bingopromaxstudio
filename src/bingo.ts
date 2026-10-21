@@ -10,6 +10,12 @@ export type BingoCard = {
   numbers: number[][]
 }
 
+export type BingoPrintPattern = {
+  name: string
+  cells: number[]
+  color?: string
+}
+
 export type BingoSheet = {
   code: string
   blockCode: string
@@ -23,6 +29,7 @@ export type BingoPrintMetadata = {
   header?: string
   banner?: string
   patterns?: string[]
+  patternDefinitions?: BingoPrintPattern[]
   notes?: string
   freeLabel?: string
 }
@@ -151,7 +158,24 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
   doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center' })
 }
 
-function addPatternPanel(doc: jsPDF, patterns: string[], x: number, y: number, width: number, height: number) {
+function addPatternGlyph(doc: jsPDF, cells: number[], x: number, y: number, size: number, color = '#cda63f') {
+  const cell = size / 5
+  doc.setFillColor('#29312f')
+  for (let index = 0; index < 25; index += 1) {
+    const column = index % 5
+    const row = Math.floor(index / 5)
+    doc.rect(x + column * cell, y + row * cell, Math.max(.35, cell - .28), Math.max(.35, cell - .28), 'F')
+  }
+  doc.setFillColor(color)
+  cells.forEach((index) => {
+    if (index < 0 || index > 24) return
+    const column = index % 5
+    const row = Math.floor(index / 5)
+    doc.rect(x + column * cell, y + row * cell, Math.max(.35, cell - .28), Math.max(.35, cell - .28), 'F')
+  })
+}
+
+function addPatternPanel(doc: jsPDF, patterns: string[], definitions: BingoPrintPattern[] = [], x: number, y: number, width: number, height: number) {
   doc.setDrawColor(154, 122, 30)
   doc.setLineWidth(.45)
   doc.setFillColor(252, 250, 243)
@@ -160,37 +184,41 @@ function addPatternPanel(doc: jsPDF, patterns: string[], x: number, y: number, w
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(5.2)
   doc.text('PATRONES DE JUEGO', x + width / 2, y + 7, { align: 'center' })
-  if (!patterns.length) {
+  const entries: BingoPrintPattern[] = definitions.length ? definitions : patterns.map(name => ({ name, cells: [] }))
+  if (!entries.length) {
     doc.setTextColor(108, 116, 108)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(4.2)
     doc.text('Sin patrones seleccionados', x + width / 2, y + 15, { align: 'center', maxWidth: width - 6 })
     return
   }
-  const columns = patterns.length > 60 ? 3 : 2
+  const columns = entries.length > 45 ? 3 : 2
   const columnWidth = (width - 6) / columns
-  const rows = Math.ceil(patterns.length / columns)
-  const fontSize = patterns.length > 60 ? 2.45 : patterns.length > 40 ? 2.7 : 3.05
-  const lineHeight = fontSize * .72
-  const rowHeight = Math.max(5.2, lineHeight * 2 + .9)
-  const startY = y + 13
-  patterns.forEach((pattern, index) => {
+  const rows = Math.ceil(entries.length / columns)
+  const rowHeight = Math.min(10.2, Math.max(7.1, (height - 18) / rows))
+  const iconSize = Math.min(5.2, rowHeight - 1.8)
+  const fontSize = entries.length > 45 ? 2.15 : 2.45
+  const startY = y + 12.5
+  entries.forEach((pattern, index) => {
     const column = Math.floor(index / rows)
     const row = index % rows
-    const textX = x + 3 + column * columnWidth
-    const textWidth = columnWidth - 2
-    const lines = doc.splitTextToSize(`${String(index + 1).padStart(2, '0')}  ${pattern}`, textWidth).slice(0, 2)
-    doc.setFillColor(245, 200, 75)
-    doc.circle(textX + .8, startY + row * rowHeight - 1.1, .7, 'F')
+    const itemX = x + 2.5 + column * columnWidth
+    const itemY = startY + row * rowHeight
+    if (pattern.cells.length) addPatternGlyph(doc, pattern.cells, itemX, itemY - iconSize + 1, iconSize, pattern.color)
+    else {
+      doc.setFillColor(245, 200, 75)
+      doc.circle(itemX + .8, itemY - 1.1, .65, 'F')
+    }
     doc.setTextColor(45, 52, 49)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(fontSize)
-    lines.forEach((line: string, lineIndex: number) => doc.text(line, textX + 2, startY + row * rowHeight + lineIndex * lineHeight))
+    const label = doc.splitTextToSize(`${String(index + 1).padStart(2, '0')} ${pattern.name}`, columnWidth - iconSize - 3).slice(0, 1)
+    doc.text(label[0], itemX + iconSize + 1.2, itemY - 1)
   })
   doc.setTextColor(104, 112, 104)
   doc.setFont('courier', 'normal')
   doc.setFontSize(3.4)
-  doc.text(`${patterns.length} patrón${patterns.length === 1 ? '' : 'es'}`, x + width / 2, y + height - 4, { align: 'center' })
+  doc.text(`${entries.length} patrón${entries.length === 1 ? '' : 'es'}`, x + width / 2, y + height - 4, { align: 'center' })
 }
 
 export function createBlockPdf(block: BingoBlock, watermark = block.watermark): ArrayBuffer {
@@ -204,12 +232,12 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       try {
         const format = metadata.banner.startsWith('data:image/png') ? 'PNG' : 'JPEG'
         const properties = doc.getImageProperties(metadata.banner)
-        const maxWidth = 126
-        const maxHeight = 18
-        const scale = Math.min(maxWidth / properties.width, maxHeight / properties.height)
+        const maxWidth = 210
+        const maxHeight = 22
+        const scale = Math.max(maxWidth / properties.width, maxHeight / properties.height)
         const width = properties.width * scale
         const height = properties.height * scale
-        doc.addImage(metadata.banner, format, 14, 2 + (maxHeight - height) / 2, width, height, 'studio-banner', 'FAST')
+        doc.addImage(metadata.banner, format, (210 - width) / 2, (22 - height) / 2, width, height, 'studio-banner', 'FAST')
       } catch {
         // If a legacy or invalid image is present, keep the text header and codes usable.
       }
@@ -243,7 +271,7 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       const [x, y] = coordinates[watermark.position]
       doc.text(watermark.text, x, y, { align: watermark.position.endsWith('right') ? 'right' : 'left', angle: -18 })
     }
-    addPatternPanel(doc, metadata?.patterns ?? [], 84, 39, 42, 185)
+    addPatternPanel(doc, metadata?.patterns ?? [], metadata?.patternDefinitions ?? [], 84, 39, 42, 185)
     const positions = [[8, 39], [122, 39], [8, 139], [122, 139]] as const
     sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 80, 82, metadata?.freeLabel ?? 'LIBRE'))
     doc.setDrawColor(220, 218, 207)

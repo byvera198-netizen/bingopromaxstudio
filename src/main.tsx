@@ -350,6 +350,7 @@ function Generator({ onGenerated, setView, tenantId, existingBlocks }: { onGener
     banner: banner || undefined,
     freeLabel: freeLabel.trim() || 'LIBRE',
     patterns: patternOptions.filter(pattern => selectedPatternIds.includes(pattern.id)).map(pattern => pattern.name),
+    patternDefinitions: patternOptions.filter(pattern => selectedPatternIds.includes(pattern.id)).map(pattern => ({ name: pattern.name, cells: pattern.cells, color: pattern.color })),
     notes: notes.trim() || undefined,
   })
   const loadBanner = (event: ChangeEvent<HTMLInputElement>) => {
