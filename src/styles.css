@@ -46,3 +46,6 @@ button { cursor: pointer; }
 .winner-alert-collapsed { align-items: center; }
 .winner-alert-collapsed > div { min-width: 0; flex: 1; }
 .winner-alert-collapsed .ghost { white-space: nowrap; }
+.winner-history-trigger { width: 100%; color: inherit; text-align: left; cursor: pointer; }
+.winner-history-trigger:hover { border-color: var(--gold); background: #f5c84b18; }
+.winner-history-open { margin-left: auto; color: var(--gold); font-size: 15px; }
