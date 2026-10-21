@@ -133,7 +133,8 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
     doc.text(letter, startX + col * cell + cell / 2, y + cell * .7, { align: 'center' })
   })
   doc.setFont('courier', 'bold')
-  doc.setFontSize(Math.max(5, cell * 1.35))
+  const numberFontSize = Math.max(12, Math.min(16.2, cell * 1.24))
+  doc.setFontSize(numberFontSize)
   const cardNumber = card.id.split('-').slice(-2).join('-') || card.id
   card.numbers.forEach((row, rowIndex) => row.forEach((value, colIndex) => {
     const cx = startX + colIndex * cell
@@ -143,19 +144,21 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
     doc.setTextColor(value === 0 ? 40 : 28, value === 0 ? 31 : 35, value === 0 ? 14 : 32)
     if (value === 0) {
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(Math.max(3.8, cell * .58))
+      doc.setFontSize(Math.max(3.4, Math.min(5.4, cell * .5)))
       doc.text(freeLabel.trim() || 'LIBRE', cx + cell / 2, cy + cell * .43, { align: 'center' })
       doc.setFont('courier', 'bold')
-      doc.setFontSize(Math.max(2.8, cell * .36))
+      doc.setFontSize(Math.max(2.5, Math.min(3.6, cell * .28)))
       doc.text(cardNumber, cx + cell / 2, cy + cell * .76, { align: 'center' })
     } else {
+      doc.setFont('courier', 'bold')
+      doc.setFontSize(numberFontSize)
       doc.text(String(value), cx + cell / 2, cy + cell * .66, { align: 'center' })
     }
   }))
   doc.setTextColor(70, 77, 72)
   doc.setFont('courier', 'normal')
-  doc.setFontSize(Math.max(5, cell * .85))
-  doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center' })
+  doc.setFontSize(Math.max(3.2, Math.min(4.1, cell * .3)))
+  doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center', maxWidth: gridWidth - 2 })
 }
 
 function addPatternGlyph(doc: jsPDF, cells: number[], x: number, y: number, size: number, color = '#cda63f') {
@@ -196,7 +199,7 @@ function addPatternPanel(doc: jsPDF, patterns: string[], definitions: BingoPrint
   const columnWidth = (width - 6) / columns
   const rows = Math.ceil(entries.length / columns)
   const rowHeight = Math.min(10.2, Math.max(7.1, (height - 18) / rows))
-  const iconSize = Math.min(5.2, rowHeight - 1.8)
+  const iconSize = Math.min(6.2, Math.max(4.6, rowHeight - 1.2))
   const fontSize = entries.length > 45 ? 2.15 : 2.45
   const startY = y + 12.5
   entries.forEach((pattern, index) => {
@@ -234,10 +237,15 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
         const properties = doc.getImageProperties(metadata.banner)
         const maxWidth = 210
         const maxHeight = 22
+        // Llena todo el encabezado sin deformar el banner; el recorte queda
+        // limitado al rectángulo A4 y nunca invade el contenido de la hoja.
         const scale = Math.max(maxWidth / properties.width, maxHeight / properties.height)
         const width = properties.width * scale
         const height = properties.height * scale
+        doc.saveGraphicsState()
+        doc.rect(0, 0, maxWidth, maxHeight, null).clip()
         doc.addImage(metadata.banner, format, (210 - width) / 2, (22 - height) / 2, width, height, 'studio-banner', 'FAST')
+        doc.restoreGraphicsState()
       } catch {
         // If a legacy or invalid image is present, keep the text header and codes usable.
       }
@@ -247,9 +255,12 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       doc.setFontSize(14)
       doc.text(metadata.header, 14, 12)
     }
-    doc.setTextColor(180, 188, 180)
-    doc.setFont('courier', 'normal')
-    doc.setFontSize(7)
+    // Contraste estable para los códigos aunque el banner sea claro o tenga mucho detalle.
+    doc.setFillColor(13, 17, 17)
+    doc.roundedRect(153, 3, 54, 16, 1.5, 1.5, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(8.6)
     doc.text(`HOJA ${sheet.code}`, 196, 10, { align: 'right' })
     doc.text(`BLOQUE ${block.code}`, 196, 16, { align: 'right' })
     const metadataLines = [
