@@ -272,10 +272,11 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
         const scale = Math.max(maxWidth / properties.width, maxHeight / properties.height)
         const width = properties.width * scale
         const height = properties.height * scale
-        doc.saveGraphicsState()
-        doc.rect(0, 0, maxWidth, maxHeight, null).clip()
+        // Do not create a PDF clipping path here. Some desktop PDF readers
+        // keep that path active after the image and hide all following
+        // drawing commands. The A4 page boundary already clips the overflow
+        // safely, so the banner remains contained without affecting cards.
         doc.addImage(metadata.banner, format, (210 - width) / 2, (22 - height) / 2, width, height, 'studio-banner', 'FAST')
-        doc.restoreGraphicsState()
       } catch {
         // If a legacy or invalid image is present, keep the text header and codes usable.
       }

@@ -137,6 +137,14 @@ test('produce CSV, PDF y ZIP con manifiesto verificable', async () => {
   assert.equal(entries.filter((name) => name.endsWith('.pdf')).length, 3)
 })
 
+test('mantiene los cartones visibles cuando la hoja usa banner', () => {
+  const block = generateBatch('qa-banner', 100)[0]
+  const banner = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+  const pdf = createBlockPdf({ ...block, printMetadata: { banner, freeLabel: 'LIBRE' } })
+  assert.equal(pdf.byteLength > 1000, true)
+  assert.equal(new TextDecoder().decode(new Uint8Array(pdf)).includes('PATRONES'), true)
+})
+
 test('evalúa un patrón usando bolilla extraída y centro libre', () => {
   const card = generateBatch('qa-pattern', 100)[0].sheets[0].cards[0]
   const cells = [10, 11, 12, 13, 14]
