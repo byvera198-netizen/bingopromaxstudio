@@ -153,31 +153,35 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
   const gridWidth = cell * 5
   const gridHeight = cell * 6
   const startX = x + (width - gridWidth) / 2
-  doc.setDrawColor(45, 52, 49)
-  doc.setFillColor(252, 250, 243)
+  doc.setDrawColor(28, 42, 39)
+  doc.setLineWidth(.55)
+  doc.setFillColor(250, 249, 243)
   doc.roundedRect(startX, y, gridWidth, gridHeight, 2, 2, 'FD')
+  doc.setFillColor(24, 39, 36)
+  doc.roundedRect(startX + .35, y + .35, gridWidth - .7, cell - .7, 1.65, 1.65, 'F')
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(Math.max(6, cell * 1.8))
+  doc.setFontSize(Math.max(7.4, cell * 1.62))
   ;['B', 'I', 'N', 'G', 'O'].forEach((letter, col) => {
-    doc.setTextColor(123, 91, 8)
+    doc.setTextColor(245, 200, 75)
     doc.text(letter, startX + col * cell + cell / 2, y + cell * .7, { align: 'center' })
   })
   doc.setFont('courier', 'bold')
-  const numberFontSize = Math.max(12, Math.min(16.2, cell * 1.24))
+  const numberFontSize = Math.max(11.5, Math.min(15.2, cell * 1.17))
   doc.setFontSize(numberFontSize)
   const cardNumber = card.id.split('-').slice(-2).join('-') || card.id
   card.numbers.forEach((row, rowIndex) => row.forEach((value, colIndex) => {
     const cx = startX + colIndex * cell
     const cy = y + (rowIndex + 1) * cell
-    doc.setFillColor(value === 0 ? 209 : 247, value === 0 ? 181 : 246, value === 0 ? 70 : 231)
+    doc.setFillColor(value === 0 ? 232 : 248, value === 0 ? 194 : 247, value === 0 ? 74 : 238)
+    doc.setDrawColor(185, 185, 172)
     doc.rect(cx, cy, cell, cell, 'FD')
-    doc.setTextColor(value === 0 ? 40 : 28, value === 0 ? 31 : 35, value === 0 ? 14 : 32)
+    doc.setTextColor(value === 0 ? 39 : 25, value === 0 ? 32 : 34, value === 0 ? 13 : 31)
     if (value === 0) {
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(Math.max(3.4, Math.min(5.4, cell * .5)))
+      doc.setFontSize(Math.max(3.35, Math.min(5.1, cell * .46)))
       doc.text(freeLabel.trim() || 'LIBRE', cx + cell / 2, cy + cell * .43, { align: 'center' })
       doc.setFont('courier', 'bold')
-      doc.setFontSize(Math.max(2.5, Math.min(3.6, cell * .28)))
+      doc.setFontSize(Math.max(2.35, Math.min(3.45, cell * .26)))
       doc.text(cardNumber, cx + cell / 2, cy + cell * .76, { align: 'center' })
     } else {
       doc.setFont('courier', 'bold')
@@ -185,10 +189,10 @@ function addCard(doc: jsPDF, card: BingoCard, x: number, y: number, width: numbe
       doc.text(String(value), cx + cell / 2, cy + cell * .66, { align: 'center' })
     }
   }))
-  doc.setTextColor(70, 77, 72)
+  doc.setTextColor(75, 88, 82)
   doc.setFont('courier', 'normal')
-  doc.setFontSize(Math.max(3.2, Math.min(4.1, cell * .3)))
-  doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .55, { align: 'center', maxWidth: gridWidth - 2 })
+  doc.setFontSize(Math.max(3.1, Math.min(4, cell * .29)))
+  doc.text(card.id, startX + gridWidth / 2, y + gridHeight + cell * .52, { align: 'center', maxWidth: gridWidth - 2 })
 }
 
 function addPatternGlyph(doc: jsPDF, cells: number[], x: number, y: number, size: number, color = '#cda63f') {
@@ -209,100 +213,117 @@ function addPatternGlyph(doc: jsPDF, cells: number[], x: number, y: number, size
 }
 
 function addPatternPanel(doc: jsPDF, patterns: string[], definitions: BingoPrintPattern[] = [], x: number, y: number, width: number, height: number) {
-  doc.setDrawColor(154, 122, 30)
-  doc.setLineWidth(.45)
-  doc.setFillColor(252, 250, 243)
+  doc.setDrawColor(193, 151, 45)
+  doc.setLineWidth(.65)
+  doc.setFillColor(17, 29, 27)
   doc.roundedRect(x, y, width, height, 2, 2, 'FD')
-  doc.setTextColor(104, 78, 12)
+  doc.setFillColor(245, 200, 75)
+  doc.roundedRect(x + 2.5, y + 3, 7, 1.1, .55, .55, 'F')
+  doc.setTextColor(248, 247, 239)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(5.2)
-  doc.text('PATRONES DE JUEGO', x + width / 2, y + 7, { align: 'center' })
+  doc.setFontSize(4.8)
+  doc.text('PATRONES', x + 2.5, y + 9, { align: 'left' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(2.45)
+  doc.setTextColor(169, 184, 176)
+  doc.text('Modalidades de juego', x + 2.5, y + 13, { align: 'left' })
   const entries: BingoPrintPattern[] = definitions.length ? definitions : patterns.map(name => ({ name, cells: [] }))
   if (!entries.length) {
-    doc.setTextColor(108, 116, 108)
+    doc.setTextColor(169, 184, 176)
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(4.2)
-    doc.text('Sin patrones seleccionados', x + width / 2, y + 15, { align: 'center', maxWidth: width - 6 })
+    doc.setFontSize(3.1)
+    doc.text('Sin patrones seleccionados', x + width / 2, y + 25, { align: 'center', maxWidth: width - 5 })
     return
   }
-  const columns = entries.length > 45 ? 3 : 2
-  const columnWidth = (width - 6) / columns
+  const columns = entries.length > 28 ? 3 : entries.length > 14 ? 2 : 1
+  const columnWidth = (width - 5) / columns
   const rows = Math.ceil(entries.length / columns)
-  const rowHeight = Math.min(10.2, Math.max(7.1, (height - 18) / rows))
-  const iconSize = Math.min(6.2, Math.max(4.6, rowHeight - 1.2))
-  const fontSize = entries.length > 45 ? 2.15 : 2.45
-  const startY = y + 12.5
+  const rowHeight = Math.min(10.5, Math.max(7.3, (height - 31) / rows))
+  const iconSize = Math.min(5.8, Math.max(4.2, rowHeight - 1.5))
+  const fontSize = entries.length > 36 ? 1.55 : entries.length > 22 ? 1.85 : 2.25
+  const startY = y + 20
   entries.forEach((pattern, index) => {
-    const column = Math.floor(index / rows)
-    const row = index % rows
+    const column = index % columns
+    const row = Math.floor(index / columns)
     const itemX = x + 2.5 + column * columnWidth
     const itemY = startY + row * rowHeight
-    if (pattern.cells.length) addPatternGlyph(doc, pattern.cells, itemX, itemY - iconSize + 1, iconSize, pattern.color)
-    else {
-      doc.setFillColor(245, 200, 75)
-      doc.circle(itemX + .8, itemY - 1.1, .65, 'F')
-    }
-    doc.setTextColor(45, 52, 49)
+    doc.setFillColor(27, 43, 39)
+    doc.roundedRect(itemX - .7, itemY - iconSize - 1.5, columnWidth - 1.2, rowHeight - .8, 1, 1, 'F')
+    if (pattern.cells.length) addPatternGlyph(doc, pattern.cells, itemX + .6, itemY - iconSize + .2, iconSize, pattern.color)
+    else { doc.setFillColor(245, 200, 75); doc.circle(itemX + 1.1, itemY - 1.1, .55, 'F') }
+    doc.setTextColor(242, 244, 235)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(fontSize)
-    const label = doc.splitTextToSize(`${String(index + 1).padStart(2, '0')} ${pattern.name}`, columnWidth - iconSize - 3).slice(0, 1)
-    doc.text(label[0], itemX + iconSize + 1.2, itemY - 1)
+    const label = doc.splitTextToSize(`${String(index + 1).padStart(2, '0')} ${pattern.name}`, columnWidth - iconSize - 2.6).slice(0, 1)
+    doc.text(label[0], itemX + iconSize + 1.3, itemY - 1)
   })
-  doc.setTextColor(104, 112, 104)
+  doc.setDrawColor(58, 78, 70)
+  doc.setLineWidth(.35)
+  doc.line(x + 2.5, y + height - 14, x + width - 2.5, y + height - 14)
+  doc.setTextColor(169, 184, 176)
   doc.setFont('courier', 'normal')
-  doc.setFontSize(3.4)
-  doc.text(`${entries.length} patrón${entries.length === 1 ? '' : 'es'}`, x + width / 2, y + height - 4, { align: 'center' })
+  doc.setFontSize(2.8)
+  doc.text(`${entries.length} patrón${entries.length === 1 ? '' : 'es'} seleccionados`, x + width / 2, y + height - 7, { align: 'center' })
+  doc.setTextColor(245, 200, 75)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(2.8)
+  doc.text('CENTRO LIBRE', x + width / 2, y + height - 3.5, { align: 'center' })
 }
 
 export function createBlockPdf(block: BingoBlock, watermark = block.watermark): ArrayBuffer {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
   block.sheets.forEach((sheet, index) => {
     if (index > 0) doc.addPage()
+    const pageWidth = 210
+    const pageHeight = 297
+    const headerHeight = 29
     doc.setFillColor(13, 17, 17)
-    doc.rect(0, 0, 210, 22, 'F')
+    doc.rect(0, 0, pageWidth, headerHeight, 'F')
     const metadata = block.printMetadata
     if (metadata?.banner) {
       try {
         const format = metadata.banner.startsWith('data:image/png') ? 'PNG' : 'JPEG'
         const properties = doc.getImageProperties(metadata.banner)
-        const maxWidth = 210
-        const maxHeight = 22
-        // Llena todo el encabezado sin deformar el banner; el recorte queda
-        // limitado al rectángulo A4 y nunca invade el contenido de la hoja.
+        const maxWidth = pageWidth
+        const maxHeight = headerHeight
         const scale = Math.max(maxWidth / properties.width, maxHeight / properties.height)
         const width = properties.width * scale
         const height = properties.height * scale
-        // Do not create a PDF clipping path here. Some desktop PDF readers
-        // keep that path active after the image and hide all following
-        // drawing commands. The A4 page boundary already clips the overflow
-        // safely, so the banner remains contained without affecting cards.
-        doc.addImage(metadata.banner, format, (210 - width) / 2, (22 - height) / 2, width, height, 'studio-banner', 'FAST')
+        doc.addImage(metadata.banner, format, (pageWidth - width) / 2, (headerHeight - height) / 2, width, height, 'studio-banner', 'FAST')
       } catch {
         // If a legacy or invalid image is present, keep the text header and codes usable.
       }
     } else if (metadata?.header) {
       doc.setTextColor(245, 200, 75)
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(14)
-      doc.text(metadata.header, 14, 12)
+      doc.setFontSize(13)
+      doc.text(metadata.header, 14, 15)
     }
     // Contraste estable para los códigos aunque el banner sea claro o tenga mucho detalle.
     doc.setFillColor(13, 17, 17)
-    doc.roundedRect(153, 3, 54, 16, 1.5, 1.5, 'F')
+    doc.roundedRect(151, 4, 56, 18, 1.5, 1.5, 'F')
+    doc.setDrawColor(245, 200, 75)
+    doc.setLineWidth(.5)
+    doc.line(151, 22, 207, 22)
     doc.setTextColor(255, 255, 255)
     doc.setFont('courier', 'bold')
-    doc.setFontSize(8.6)
-    doc.text(`HOJA ${sheet.code}`, 196, 10, { align: 'right' })
-    doc.text(`BLOQUE ${block.code}`, 196, 16, { align: 'right' })
+    doc.setFontSize(7.3)
+    doc.text(`HOJA ${sheet.code}`, 204, 11, { align: 'right' })
+    doc.setFontSize(6.4)
+    doc.text(`BLOQUE ${block.code}`, 204, 17, { align: 'right' })
+    doc.setTextColor(245, 200, 75)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(4.1)
+    doc.text('BINGO PROMAX STUDIO', 10, 25, { align: 'left' })
     const metadataLines = [
       metadata?.date ? `Fecha: ${metadata.date}` : '',
       metadata?.prizePlan ? `Plan de premios: ${metadata.prizePlan}` : '',
     ].filter(Boolean)
     if (metadataLines.length) {
-      doc.setTextColor(50, 58, 52)
+      doc.setTextColor(76, 91, 84)
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(7)
-      metadataLines.slice(0, 2).forEach((line, lineIndex) => doc.text(line, 14, 28 + lineIndex * 4))
+      doc.setFontSize(5.5)
+      metadataLines.slice(0, 2).forEach((line, lineIndex) => doc.text(line, 10, 36 + lineIndex * 3.8, { maxWidth: 188 }))
     }
     if (watermark?.text) {
       const shade = Math.max(150, Math.min(235, Math.round(235 - watermark.opacity * 180)))
@@ -313,15 +334,24 @@ export function createBlockPdf(block: BingoBlock, watermark = block.watermark): 
       const [x, y] = coordinates[watermark.position]
       doc.text(watermark.text, x, y, { align: watermark.position.endsWith('right') ? 'right' : 'left', angle: -18 })
     }
-    addPatternPanel(doc, metadata?.patterns ?? [], metadata?.patternDefinitions ?? [], 84, 39, 42, 185)
-    const positions = [[8, 39], [122, 39], [8, 139], [122, 139]] as const
-    sheet.cards.forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 80, 82, metadata?.freeLabel ?? 'LIBRE'))
-    doc.setDrawColor(220, 218, 207)
-    doc.line(14, 279, 196, 279)
-    doc.setTextColor(95, 102, 96)
-    doc.setFontSize(7)
-    doc.text('Conserve esta hoja para validación y distribución.', 14, 286)
-    doc.text(`${block.campaign} · ${index + 1}/${block.pages}`, 196, 286, { align: 'right' })
+    addPatternPanel(doc, metadata?.patterns ?? [], metadata?.patternDefinitions ?? [], 89, 50, 32, 181)
+    const positions = [[9, 50], [122, 50], [9, 151], [122, 151]] as const
+    sheet.cards.slice(0, 4).forEach((card, cardIndex) => addCard(doc, card, positions[cardIndex][0], positions[cardIndex][1], 79, 82, metadata?.freeLabel ?? 'LIBRE'))
+    doc.setDrawColor(211, 204, 181)
+    doc.setLineWidth(.45)
+    doc.line(10, 278, 200, 278)
+    doc.setTextColor(76, 91, 84)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(5.2)
+    doc.text('Hoja oficial de distribución · conserve para validación', 10, 285)
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(5.2)
+    doc.setTextColor(43, 60, 53)
+    doc.text(`${block.campaign} · ${index + 1}/${block.pages}`, 200, 285, { align: 'right' })
+    doc.setTextColor(140, 145, 136)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(4.5)
+    doc.text('4 cartones · centro libre · formato 5 × 5', 105, 291, { align: 'center' })
   })
   return doc.output('arraybuffer')
 }
