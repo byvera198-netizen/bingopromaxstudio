@@ -1,4 +1,4 @@
--- Garantiza el acceso total del desarrollador principal de Bingo ProMax Studio.
+-- Garantiza el acceso total de las cuentas desarrolladoras de Bingo ProMax Studio.
 -- Ejecutar después de 008_global_card_code_uniqueness.sql.
 
 insert into public.studio_members(
@@ -11,7 +11,8 @@ insert into public.studio_members(
   party_id,
   display_name
 )
-values (
+values
+(
   'byvera198@gmail.com',
   'developer',
   true,
@@ -20,6 +21,16 @@ values (
   null,
   null,
   'Desarrollador principal'
+),
+(
+  'bveraalvear@gmail.com',
+  'developer',
+  true,
+  '{"dashboard":true,"generator":true,"blocks":true,"games":true,"patterns":true,"integration":true,"users":true,"audit":true}'::jsonb,
+  null,
+  null,
+  null,
+  'Desarrollador asociado'
 )
 on conflict (email) do update set
   role = 'developer',

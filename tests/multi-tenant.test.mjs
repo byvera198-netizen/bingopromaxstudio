@@ -78,6 +78,7 @@ test('la migración de bloques reserva el borrado a gestores', async () => {
 test('la migración garantiza acceso total al desarrollador principal', async () => {
   const sql = await readFile(new URL('../supabase/009_primary_developer_access.sql', import.meta.url), 'utf8')
   assert.match(sql, /byvera198@gmail\.com/)
+  assert.match(sql, /bveraalvear@gmail\.com/)
   assert.match(sql, /'developer'/)
   assert.match(sql, /"dashboard":true/)
   assert.match(sql, /"users":true/)
